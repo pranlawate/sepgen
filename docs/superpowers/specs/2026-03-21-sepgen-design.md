@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.4
+**Version:** 1.5
 **Date:** 2026-03-22
-**Status:** Updated — auto-detection: MakefileParser, ProjectScanner, symbol mappings from sepolicy, path-prefix classification
+**Status:** Updated — maximized static analysis: service arg parsing, config file parsing, /run alias, socket expansion, exec/proc/SELinux API detection, port types, init script .fc
 
 ---
 
@@ -428,6 +428,8 @@ class AccessType(Enum):
     PROCESS_CONTROL = "process_control" # setrlimit, setpriority
     CAPABILITY = "capability"           # cap_init, cap_set_proc
     DAEMON = "daemon"                   # daemon() call
+    PROCESS_EXEC = "process_exec"       # exec*/system/popen
+    NETLINK_SOCKET = "netlink_socket"   # AF_NETLINK socket
 
 class IntentType(Enum):
     CONFIG_FILE = "config_file"
@@ -441,6 +443,11 @@ class IntentType(Enum):
     SYSLOG = "syslog"
     SELF_CAPABILITY = "self_capability"     # capability + process rules
     DAEMON_PROCESS = "daemon_process"       # confirms init_daemon_domain
+    EXEC_BINARY = "exec_binary"             # exec*/system/popen → can_exec
+    KERNEL_STATE = "kernel_state"           # /proc/* reads → kernel_read_*
+    SYSFS_READ = "sysfs_read"              # /sys/* reads → dev_read_sysfs
+    SELINUX_API = "selinux_api"            # getcon/setcon → seutil_read_config
+    NETLINK_SOCKET = "netlink_socket"      # AF_NETLINK → netlink_*_socket
     TERMINAL_IO = "terminal_io"
     SHARED_LIBRARY = "shared_library"
     UNKNOWN = "unknown"
@@ -508,14 +515,19 @@ class IntentClassifier:
 | Rule | Condition | IntentType |
 |------|-----------|------------|
 | VarRunRule | `/var/run/**` or `/run/**` + unlink/chmod/write/create | PID_FILE |
+| PathPrefixRule | `/var/log/**` → LOG_FILE, `/tmp/**` → TEMP_FILE, `/var/lib/**` → DATA_DIR | (varies) |
 | PidFileRule | `/var/run/*.pid` + write | PID_FILE |
 | ConfigFileRule | `/etc/**` + read, `*.conf`, `*.cfg`, etc. | CONFIG_FILE |
-| DataDirRule | `/var/*/data/**` + write | DATA_DIR |
 | SyslogRule | `access_type == SYSLOG` | SYSLOG |
 | UnixSocketRule | `SOCKET_BIND` + domain in `[PF_UNIX, AF_UNIX]` | UNIX_SOCKET_SERVER |
 | NetworkServerRule | `SOCKET_BIND` + domain in `[AF_INET, PF_INET, AF_INET6]` | NETWORK_SERVER |
 | SelfCapabilityRule | `access_type in [CAPABILITY, PROCESS_CONTROL]` | SELF_CAPABILITY |
 | DaemonProcessRule | `access_type == DAEMON` | DAEMON_PROCESS |
+| ExecBinaryRule | `access_type == PROCESS_EXEC` | EXEC_BINARY |
+| KernelStateRule | file read on `/proc/**` paths | KERNEL_STATE |
+| SysfsRule | file read on `/sys/**` paths | SYSFS_READ |
+| SELinuxApiRule | `access_type == SELINUX_API` (from symbol detection) | SELINUX_API |
+| NetlinkSocketRule | `access_type == NETLINK_SOCKET` | NETLINK_SOCKET |
 
 ---
 
@@ -914,6 +926,8 @@ class TypeGenerator:
         IntentType.PID_FILE: "{module}_var_run_t",
         IntentType.DATA_DIR: "{module}_data_t",
         IntentType.LOG_FILE: "{module}_log_t",
+        IntentType.TEMP_FILE: "{module}_tmp_t",
+        IntentType.NETWORK_SERVER: "{module}_port_t",  # port_type attribute
     }
 
     def generate_type_name(self, module_name: str, intent: Intent) -> Optional[str]:

@@ -24,10 +24,12 @@ sepgen takes a dual-mode approach to policy generation:
 1. **Static analysis** (primary) — Reads your C source code (single file or
    entire directory), resolves `#define` constants, tracks string variables,
    identifies syscall patterns (`fopen`, `open`, `socket`, `bind`, `syslog`,
-   `setrlimit`, `cap_*`, `unlink`, `chmod`, `daemon`), scans for 30+
-   capability/process symbols (adopted from `sepolicy generate`), parses
-   Makefiles and `.service` files for install paths, and predicts what the
-   application will access at runtime. No execution needed.
+   `setrlimit`, `cap_*`, `unlink`, `chmod`, `daemon`, `exec*`, `system`,
+   `popen`), scans for 40+ capability/process symbols, detects `/proc` and
+   `/sys` access, recognizes SELinux API calls, parses `.conf` files for data
+   paths, extracts config/PID paths from `.service` file arguments, parses
+   Makefiles for install targets, and generates `/run` alias entries and custom
+   port types. No execution needed.
 
 2. **Runtime tracing** (supplementary) — Traces the compiled binary with
    `strace` to observe actual syscalls. Use this when source code is unavailable
@@ -53,14 +55,17 @@ Output: `myapp.te`, `myapp.fc` — ready to compile and install.
 | Access observed | audit2allow | sepgen |
 |---|---|---|
 | Write to `/var/run/app.pid` | `allow app_t var_run_t:file write;` | Creates `app_var_run_t`, uses `files_pid_filetrans()` + `manage_files_pattern()` |
-| Read `/etc/app.conf` | `allow app_t etc_t:file read;` | Creates `app_conf_t`, uses `read_files_pattern()` |
+| Read `/etc/app.conf` | `allow app_t etc_t:file read;` | Creates `app_conf_t`, uses `files_config_file()` + `read_files_pattern()` |
 | Write to `/var/app/data.txt` | `allow app_t var_t:file { create write };` | Creates `app_data_t`, uses `manage_files_pattern()` |
 | Syslog socket | `allow app_t devlog_t:sock_file write;` + 3 more rules | `logging_send_syslog_msg(app_t)` (deduplicated) |
-| Bind TCP port | `allow app_t port_t:tcp_socket name_bind;` | `corenet_tcp_bind_generic_port(app_t)` + port type |
+| Bind TCP port | `allow app_t port_t:tcp_socket name_bind;` | Creates `app_port_t`, `tcp_socket create_stream_socket_perms` + `corenet_tcp_*` |
 | Bind Unix socket | `allow app_t self:unix_stream_socket ...;` (many rules) | `allow app_t self:unix_stream_socket { create bind listen accept };` |
+| `exec*()` / `system()` | *(not generated)* | `can_exec(app_t, app_exec_t)` + `corecmd_search_bin(app_t)` |
+| Read `/proc/*` | *(not generated)* | `kernel_read_system_state(app_t)` |
+| SELinux API calls | *(not generated)* | `selinux_compute_access_vector(app_t)` + `seutil_read_config(app_t)` |
 | `setrlimit()` call | *(not generated)* | `allow app_t self:capability sys_resource;` + `self:process setrlimit;` |
 | Init script detected | *(not generated)* | Creates `app_initrc_exec_t`, uses `init_script_file()` |
-| `.fc` file | *(never generated)* | Full file context mapping with regex patterns |
+| `.fc` file | *(never generated)* | Full file context mapping with `/var/run` + `/run` aliases |
 
 ## Usage
 
@@ -184,13 +189,15 @@ Use `-y` to auto-approve merges (trace wins on conflicts).
    │  IncludeAnalyzer    │                          │
    │  (header inference) │                          │
    │  CAnalyzer          │                          │
-   │  (15+ patterns)     │                          │
+   │  (20+ patterns)     │                          │
    │  SymbolScanner      │                          │
-   │  (30+ cap/process)  │                          │
+   │  (40+ cap/process)  │                          │
+   │  ConfigParser       │                          │
+   │  (data path extract)│                          │
    │  MakefileParser     │                          │
    │  (exec path, dirs)  │                          │
    │  ServiceDetector    │                          │
-   │  (.service/.init)   │                          │
+   │  (.service args)    │                          │
    │  ProjectScanner     │                          │
    │  (orchestrator)     │                          │
    └──────────┬──────────┘                          │
@@ -322,14 +329,14 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** MVP Complete — Auto-detection improvements in progress
+**Phase:** Static analysis maximized — ready for trace mode
 
 Implemented:
 - Core data models (Access, Intent, PolicyModule, FileContexts)
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with deterministic rules
+- Intent classification engine with 14 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -339,21 +346,21 @@ Implemented:
 - `#define` constant resolution (Preprocessor)
 - String variable tracking (DataFlowAnalyzer)
 - Header-based capability inference (IncludeAnalyzer)
-- Service file detection (ServiceDetector)
+- Service file detection with argument parsing (config/PID paths from ExecStart)
+- Config file parsing for data paths (KEY=VALUE format)
 - Multi-file directory analysis with cross-file dedup
-- 15+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon)
-- `self:` allow rules (capability, process, unix_stream_socket)
+- 20+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon, exec*, /proc, /sys, netlink)
+- 40+ symbol-to-permission mappings (from sepolicy generate)
+- SELinux API detection (getcon, setcon, security_compute_av)
+- Socket type expansion (SOCK_DGRAM, AF_NETLINK)
+- `self:` allow rules (capability, process, unix_stream_socket, tcp_socket, unix_dgram_socket, netlink)
 - `manage_*_pattern` macros for runtime directories
+- Custom port type generation (port_t + port_type attribute)
 - Init script type and `.fc` generation with regex patterns
-- VarRunRule, bind path inference, signal_perms from headers
-- 100% statically-detectable coverage on mcstransd reference policy
-
-In progress (auto-detection — eliminating manual flags):
-- MakefileParser for exec path and install targets
-- Broader ServiceDetector search scope
-- ProjectScanner orchestrator (unified scan pipeline)
-- Symbol-to-permission mappings from sepolicy (30+ additional patterns)
-- Path-prefix routing for intent classification
+- /var/run + /run dual alias in .fc generation
+- VarRunRule, PathPrefixRule, bind path inference, signal_perms
+- MakefileParser, ProjectScanner, SymbolScanner
+- Validated against testprog, testprog-net, and mcstransd reference policies
 
 Future enhancements:
 - Interactive tracing mode with live UI
@@ -366,12 +373,13 @@ Future enhancements:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.4)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.5)
 - [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
 - [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
 - [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
 - [Implementation Plan — Auto-Detection](docs/superpowers/plans/2026-03-22-auto-detection.md)
-- [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment (100% reachable coverage)
+- [Implementation Plan — Max Static Analysis](docs/superpowers/plans/2026-03-22-max-static-analysis.md)
+- [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
 
