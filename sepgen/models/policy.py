@@ -42,11 +42,15 @@ class PolicyModule:
     macro_calls: List[MacroCall] = field(default_factory=list)
 
     def add_type(self, type_name: str, attributes: List[str] = None):
-        """Add a type declaration"""
+        """Add a type declaration (deduplicated by name)."""
+        if any(t.name == type_name for t in self.types):
+            return
         self.types.append(TypeDeclaration(type_name, attributes or []))
 
     def add_macro(self, macro_name: str, args: List[str]):
-        """Add a macro call"""
+        """Add a macro call (deduplicated by name+args)."""
+        if any(m.name == macro_name and m.args == args for m in self.macro_calls):
+            return
         self.macro_calls.append(MacroCall(macro_name, args))
 
 @dataclass

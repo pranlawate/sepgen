@@ -40,3 +40,28 @@ def test_analyze_directory_preserves_source_file(tmp_path):
     assert len(accesses) == 1
     assert accesses[0].source_file is not None
     assert "app.c" in accesses[0].source_file
+
+
+def test_cross_file_syslog_dedup(tmp_path):
+    """Syslog calls in multiple files should produce one access per function."""
+    (tmp_path / "a.c").write_text('syslog(LOG_INFO, "msg1");')
+    (tmp_path / "b.c").write_text('syslog(LOG_ERR, "msg2");')
+    (tmp_path / "c.c").write_text('syslog(LOG_WARNING, "msg3");')
+
+    analyzer = CAnalyzer()
+    accesses = analyzer.analyze_directory(tmp_path)
+
+    syslog_accesses = [a for a in accesses if a.access_type == AccessType.SYSLOG]
+    assert len(syslog_accesses) == 1, f"Expected 1 syslog access, got {len(syslog_accesses)}"
+
+
+def test_cross_file_syslog_keeps_different_functions(tmp_path):
+    """openlog and syslog are different functions — both kept."""
+    (tmp_path / "a.c").write_text('openlog("app", LOG_PID, LOG_DAEMON);')
+    (tmp_path / "b.c").write_text('syslog(LOG_INFO, "msg");')
+
+    analyzer = CAnalyzer()
+    accesses = analyzer.analyze_directory(tmp_path)
+
+    syslog_accesses = [a for a in accesses if a.access_type == AccessType.SYSLOG]
+    assert len(syslog_accesses) == 2

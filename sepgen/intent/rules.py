@@ -16,6 +16,36 @@ class ClassificationRule:
         return 1.0
 
 
+class VarRunRule(ClassificationRule):
+    """Classify any file operation on /var/run/ or /run/ paths as PID_FILE.
+
+    This catches unlink(), chmod(), fopen(), open() etc. on runtime state
+    directories, ensuring _var_run_t type generation even when there is
+    no explicit .pid file.
+    """
+
+    VAR_RUN_PATTERNS = [
+        re.compile(r'^/var/run/'),
+        re.compile(r'^/run/'),
+    ]
+
+    MATCHING_TYPES = [
+        AccessType.FILE_UNLINK,
+        AccessType.FILE_SETATTR,
+        AccessType.FILE_WRITE,
+        AccessType.FILE_CREATE,
+        AccessType.FILE_READ,
+    ]
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in self.MATCHING_TYPES:
+            return False
+        return any(pattern.search(access.path) for pattern in self.VAR_RUN_PATTERNS)
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.PID_FILE
+
+
 class PidFileRule(ClassificationRule):
     """Classify PID file accesses"""
 
@@ -117,6 +147,7 @@ class NetworkServerRule(ClassificationRule):
 
 
 DEFAULT_RULES = [
+    VarRunRule(),
     PidFileRule(),
     ConfigFileRule(),
     SyslogRule(),

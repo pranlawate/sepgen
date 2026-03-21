@@ -81,10 +81,14 @@ class TEGenerator:
             if intent.intent_type == IntentType.SELF_CAPABILITY:
                 for access in intent.accesses:
                     if access.access_type == AccessType.PROCESS_CONTROL:
-                        cap = access.details.get("capability")
-                        if cap:
-                            cap_perms.add(cap)
-                        process_perms.add("setrlimit")
+                        process_perm = access.details.get("process_perm")
+                        if process_perm:
+                            process_perms.add(process_perm)
+                        else:
+                            cap = access.details.get("capability")
+                            if cap:
+                                cap_perms.add(cap)
+                            process_perms.add("setrlimit")
                     elif access.access_type == AccessType.CAPABILITY:
                         process_perms.update(["getcap", "setcap"])
 

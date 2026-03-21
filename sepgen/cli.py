@@ -14,6 +14,7 @@ def create_parser() -> argparse.ArgumentParser:
     analyze_parser = subparsers.add_parser('analyze', help='Generate policy from static source code analysis')
     analyze_parser.add_argument('source_path', help='Path to source code directory or file')
     analyze_parser.add_argument('--name', help='Policy module name (default: derived from source)', default=None)
+    analyze_parser.add_argument('--exec-path', help='Installed binary path for .fc entry (e.g. /usr/sbin/setrans)', default=None)
     analyze_parser.add_argument('-v', '--verbose', action='count', default=0,
                                 help='Increase verbosity (-v for verbose, -vv for debug)')
 
@@ -49,6 +50,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 def run_analyze(args) -> int:
     """Execute analyze command"""
     from sepgen.analyzer.c_analyzer import CAnalyzer
+    from sepgen.analyzer.service_detector import ServiceDetector
     from sepgen.intent.classifier import IntentClassifier
     from sepgen.generator.te_generator import TEGenerator
     from sepgen.generator.fc_generator import FCGenerator
@@ -58,7 +60,7 @@ def run_analyze(args) -> int:
     source_path = Path(args.source_path)
     module_name = args.name or source_path.stem
 
-    print(f"[1/3] Analyzing source... ", end='', flush=True)
+    print(f"[1/4] Analyzing source... ", end='', flush=True)
     analyzer = CAnalyzer()
     if source_path.is_dir():
         accesses = analyzer.analyze_directory(source_path)
@@ -66,7 +68,20 @@ def run_analyze(args) -> int:
         accesses = analyzer.analyze_file(source_path)
     print(f"✓")
 
-    print(f"[2/3] Classifying intents... ", end='', flush=True)
+    service_info = None
+    if source_path.is_dir():
+        print(f"[2/4] Detecting service files... ", end='', flush=True)
+        detector = ServiceDetector()
+        service_info = detector.detect_service_files(source_path.parent)
+        print(f"✓")
+    else:
+        print(f"[2/4] Detecting service files... (skipped, single file)")
+
+    exec_path = getattr(args, 'exec_path', None)
+    if not exec_path and service_info and service_info.exec_path:
+        exec_path = service_info.exec_path
+
+    print(f"[3/4] Classifying intents... ", end='', flush=True)
     classifier = IntentClassifier()
     intents = classifier.classify(accesses)
     print(f"✓")
@@ -75,13 +90,13 @@ def run_analyze(args) -> int:
         for intent in intents:
             print(f"  • {intent.intent_type.value}: {intent.accesses[0].path}")
 
-    print(f"[3/3] Generating policy... ", end='', flush=True)
+    print(f"[4/4] Generating policy... ", end='', flush=True)
 
     te_gen = TEGenerator(module_name)
-    policy = te_gen.generate(intents)
+    policy = te_gen.generate(intents, service_info=service_info)
 
-    fc_gen = FCGenerator(module_name)
-    contexts = fc_gen.generate(intents)
+    fc_gen = FCGenerator(module_name, exec_path=exec_path)
+    contexts = fc_gen.generate(intents, service_info=service_info)
 
     te_writer = TEWriter()
     fc_writer = FCWriter()

@@ -7,7 +7,6 @@ class MacroLookup:
 
     KNOWN_MAPPINGS = {
         IntentType.SYSLOG: "logging_send_syslog_msg",
-        IntentType.PID_FILE: "files_pid_filetrans",
         IntentType.CONFIG_FILE: "read_files_pattern",
         IntentType.LOG_FILE: "logging_log_file",
         IntentType.NETWORK_SERVER: "corenet_tcp_bind_generic_node",

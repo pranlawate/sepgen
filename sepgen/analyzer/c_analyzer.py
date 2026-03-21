@@ -40,7 +40,21 @@ class CAnalyzer(BaseAnalyzer):
         accesses = []
         for c_file in sorted(dir_path.rglob("*.c")):
             accesses.extend(self.analyze_file(c_file))
+        accesses = self._deduplicate_cross_file(accesses)
         return accesses
+
+    def _deduplicate_cross_file(self, accesses: List[Access]) -> List[Access]:
+        """Remove duplicate SYSLOG accesses across files (same function → one access)."""
+        seen_syslog_funcs = set()
+        result = []
+        for access in accesses:
+            if access.access_type == AccessType.SYSLOG:
+                func = access.details.get("function")
+                if func in seen_syslog_funcs:
+                    continue
+                seen_syslog_funcs.add(func)
+            result.append(access)
+        return result
 
     def analyze_string(self, code: str) -> List[Access]:
         """Analyze C code string using regex patterns"""
@@ -73,6 +87,9 @@ class CAnalyzer(BaseAnalyzer):
         accesses.extend(self._detect_setrlimit(code))
         accesses.extend(self._detect_capabilities(code))
         accesses.extend(self._detect_daemon(code))
+        accesses.extend(self._detect_signal_include(code))
+
+        self._infer_bind_paths(accesses)
 
         return accesses
 
@@ -206,6 +223,36 @@ class CAnalyzer(BaseAnalyzer):
                 syscall=match.group(1),
                 details={},
                 source_line=code[:match.start()].count('\n') + 1
+            ))
+        return accesses
+
+    SIGNAL_INCLUDE_PATTERN = re.compile(r'#include\s+<signal\.h>')
+
+    def _infer_bind_paths(self, accesses: List[Access]) -> None:
+        """Copy /var/run/ unlink paths to empty-path PF_UNIX bind accesses."""
+        unlink_paths = [
+            a.path for a in accesses
+            if a.access_type == AccessType.FILE_UNLINK
+            and (a.path.startswith("/var/run/") or a.path.startswith("/run/"))
+        ]
+        if not unlink_paths:
+            return
+        for access in accesses:
+            if (access.access_type == AccessType.SOCKET_BIND
+                    and access.details.get("domain") in ("PF_UNIX", "AF_UNIX")
+                    and not access.path):
+                access.path = unlink_paths[0]
+
+    def _detect_signal_include(self, code: str) -> List[Access]:
+        """Emit synthetic PROCESS_CONTROL access when signal.h is included."""
+        accesses = []
+        if self.SIGNAL_INCLUDE_PATTERN.search(code):
+            accesses.append(Access(
+                access_type=AccessType.PROCESS_CONTROL,
+                path="",
+                syscall="signal",
+                details={"process_perm": "signal_perms"},
+                source_line=0
             ))
         return accesses
 

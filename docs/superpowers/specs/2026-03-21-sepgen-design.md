@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.2
+**Version:** 1.3
 **Date:** 2026-03-22
-**Status:** Updated — analyzer improvements v2: deduplication, open(), manage macros, self:process, initrc generation, .fc regex patterns
+**Status:** Updated — coverage fixes: cross-file dedup, VarRunRule, bind path inference, --exec-path CLI, signal_perms
 
 ---
 
@@ -262,14 +262,19 @@ Examines the source tree alongside `.c` files to find systemd unit files and ini
 | Capabilities | `cap_init()`, `cap_set_proc()`, `cap_get_proc()` | `CAPABILITY` |
 | Daemonize | `daemon()` | `DAEMON` |
 
-**Deduplication**: Some patterns (notably syslog) may match dozens of times in a single file. The analyzer deduplicates by emitting only one Access per distinct function name. One `logging_send_syslog_msg()` macro is sufficient regardless of how many `syslog()` calls exist.
+**Deduplication**: Some patterns (notably syslog) may match dozens of times in a single file. The analyzer deduplicates by emitting only one Access per distinct function name. One `logging_send_syslog_msg()` macro is sufficient regardless of how many `syslog()` calls exist. Cross-file deduplication is performed in `analyze_directory` after aggregating per-file results — duplicate SYSLOG accesses for the same function name are collapsed.
+
+**Bind path inference**: The C idiom `unlink(path); bind(sock, ...)` is standard for Unix sockets — the unlink path IS the socket path. After all detection passes, a post-processing step copies the path from `FILE_UNLINK` accesses on `/var/run/` paths to any `SOCKET_BIND` access with `domain=PF_UNIX`/`AF_UNIX` and an empty path.
+
+**signal_perms from headers**: When `#include <signal.h>` is detected, the analyzer emits a synthetic `PROCESS_CONTROL` access with `details={"process_perm": "signal_perms"}`, which TEGenerator collects into `self:process` permissions.
 
 **Key decisions**:
 - Regex parsing for now (handles common patterns, fast to implement)
 - Interface designed for tree-sitter swap later
 - Preprocessor expands `#define` constants before pattern matching
 - DataFlowAnalyzer resolves simple `char *var = "..."` assignments
-- Multi-file directory analysis aggregates results across all `.c` files
+- Multi-file directory analysis aggregates results across all `.c` files with cross-file dedup
+- Post-processing pass infers bind paths from preceding unlink calls
 - Returns same `Access` objects as trace pipeline
 
 ---
@@ -400,6 +405,7 @@ class Intent:
 class IntentClassifier:
     def __init__(self):
         self.rules = [
+            VarRunRule(),            # /var/run/** + unlink/chmod/write → PID_FILE
             PidFileRule(),           # /var/run/*.pid + write → PID_FILE
             ConfigFileRule(),        # /etc/** + read → CONFIG_FILE
             DataDirRule(),           # /var/*/data/** + write → DATA_DIR
@@ -435,6 +441,7 @@ class IntentClassifier:
 
 | Rule | Condition | IntentType |
 |------|-----------|------------|
+| VarRunRule | `/var/run/**` or `/run/**` + unlink/chmod/write/create | PID_FILE |
 | PidFileRule | `/var/run/*.pid` + write | PID_FILE |
 | ConfigFileRule | `/etc/**` + read, `*.conf`, `*.cfg`, etc. | CONFIG_FILE |
 | DataDirRule | `/var/*/data/**` + write | DATA_DIR |
@@ -925,11 +932,11 @@ Generated: myapp.te (23 lines), myapp.fc (4 entries)
 **Commands**:
 
 ```bash
-sepgen analyze <source-path-or-directory> [--name MODULE_NAME] [-v] [-vv]
+sepgen analyze <source-path-or-directory> [--name MODULE_NAME] [--exec-path /usr/sbin/app] [-v] [-vv]
 sepgen trace <binary> [--args "ARGS"] [--pid PID] [-v] [-vv] [-y]
 ```
 
-When `<source-path-or-directory>` is a directory, all `.c` files are analyzed recursively and results are aggregated. Service files (`.service`, `.init`) are also detected in the directory tree.
+When `<source-path-or-directory>` is a directory, all `.c` files are analyzed recursively and results are aggregated. Service files (`.service`, `.init`) are also detected in the directory tree. The `--exec-path` argument provides the installed binary path for `.fc` entry generation; if omitted, the analyzer tries to infer it from `.service` files.
 
 **Verbosity levels**:
 

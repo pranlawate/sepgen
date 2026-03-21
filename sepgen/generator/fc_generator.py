@@ -43,11 +43,12 @@ class FCGenerator:
     def _path_to_fc_regex(self, path: str, selinux_type: str) -> str:
         """Convert paths to .fc regex patterns for directory trees."""
         if "_var_run_t" in selinux_type:
-            parts = Path(path).parts
+            p = Path(path)
+            parts = p.parts
             for i, part in enumerate(parts):
                 if part in ("run", "var"):
                     if i + 1 < len(parts) and parts[i + 1] != "run":
-                        return "/".join(parts[:i + 2]) + "(/.*)?"
+                        return str(Path(*parts[:i + 2])) + "(/.*)?"
                     elif i + 2 < len(parts):
-                        return "/".join(parts[:i + 3]) + "(/.*)?"
+                        return str(Path(*parts[:i + 3])) + "(/.*)?"
         return path

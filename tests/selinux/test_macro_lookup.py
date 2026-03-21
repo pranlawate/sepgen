@@ -11,9 +11,10 @@ def test_suggest_macro_for_syslog():
 
 
 def test_suggest_macro_for_pid_file():
+    """PID_FILE macros are generated directly by TEGenerator, not MacroLookup."""
     lookup = MacroLookup()
     intent = Intent(intent_type=IntentType.PID_FILE, accesses=[Access(AccessType.FILE_WRITE, "/var/run/app.pid", "open")])
-    assert lookup.suggest_macro(intent) == "files_pid_filetrans"
+    assert lookup.suggest_macro(intent) is None
 
 
 def test_suggest_macro_for_config_file():
