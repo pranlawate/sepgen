@@ -54,12 +54,36 @@ class TEGenerator:
                     policy.add_macro("manage_files_pattern", [
                         f"{self.module_name}_t", custom_type, custom_type
                     ])
-                elif intent.intent_type.value in ['config_file', 'data_dir', 'log_file']:
+                elif intent.intent_type == IntentType.LOG_FILE:
+                    policy.add_macro("logging_log_file", [custom_type])
+                    policy.add_macro("manage_files_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                    policy.add_macro("logging_log_filetrans", [
+                        f"{self.module_name}_t", custom_type, "file"
+                    ])
+                elif intent.intent_type == IntentType.TEMP_FILE:
+                    policy.add_macro("files_tmp_file", [custom_type])
+                    policy.add_macro("files_tmp_filetrans", [
+                        f"{self.module_name}_t", custom_type, "{ file dir }"
+                    ])
+                    policy.add_macro("manage_files_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                elif intent.intent_type == IntentType.DATA_DIR:
+                    policy.add_macro("files_type", [custom_type])
+                    policy.add_macro("manage_dirs_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                    policy.add_macro("manage_files_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                elif intent.intent_type == IntentType.CONFIG_FILE:
                     policy.add_macro("files_type", [custom_type])
 
             macro = self.macro_lookup.suggest_macro(intent)
             if macro:
-                if custom_type and intent.intent_type.value in ['config_file', 'data_dir']:
+                if custom_type and intent.intent_type == IntentType.CONFIG_FILE:
                     policy.add_macro(macro, [
                         f"{self.module_name}_t",
                         custom_type,

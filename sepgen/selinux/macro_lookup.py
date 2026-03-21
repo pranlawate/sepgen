@@ -8,9 +8,7 @@ class MacroLookup:
     KNOWN_MAPPINGS = {
         IntentType.SYSLOG: "logging_send_syslog_msg",
         IntentType.CONFIG_FILE: "read_files_pattern",
-        IntentType.LOG_FILE: "logging_log_file",
         IntentType.NETWORK_SERVER: "corenet_tcp_bind_generic_node",
-        IntentType.DATA_DIR: "manage_files_pattern",
     }
 
     def __init__(self):

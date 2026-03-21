@@ -49,8 +49,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def run_analyze(args) -> int:
     """Execute analyze command"""
-    from sepgen.analyzer.c_analyzer import CAnalyzer
-    from sepgen.analyzer.service_detector import ServiceDetector
+    from sepgen.analyzer.project_scanner import ProjectScanner
     from sepgen.intent.classifier import IntentClassifier
     from sepgen.generator.te_generator import TEGenerator
     from sepgen.generator.fc_generator import FCGenerator
@@ -60,43 +59,32 @@ def run_analyze(args) -> int:
     source_path = Path(args.source_path)
     module_name = args.name or source_path.stem
 
-    print(f"[1/4] Analyzing source... ", end='', flush=True)
-    analyzer = CAnalyzer()
-    if source_path.is_dir():
-        accesses = analyzer.analyze_directory(source_path)
-    else:
-        accesses = analyzer.analyze_file(source_path)
+    print(f"[1/3] Scanning project... ", end='', flush=True)
+    scanner = ProjectScanner()
+    project = scanner.scan(source_path, module_name)
     print(f"✓")
 
-    service_info = None
-    if source_path.is_dir():
-        print(f"[2/4] Detecting service files... ", end='', flush=True)
-        detector = ServiceDetector()
-        service_info = detector.detect_service_files(source_path.parent)
-        print(f"✓")
-    else:
-        print(f"[2/4] Detecting service files... (skipped, single file)")
+    exec_path = getattr(args, 'exec_path', None) or project.exec_path
 
-    exec_path = getattr(args, 'exec_path', None)
-    if not exec_path and service_info and service_info.exec_path:
-        exec_path = service_info.exec_path
+    if args.verbose >= 2 and exec_path:
+        print(f"  exec_path: {exec_path}")
 
-    print(f"[3/4] Classifying intents... ", end='', flush=True)
+    print(f"[2/3] Classifying intents... ", end='', flush=True)
     classifier = IntentClassifier()
-    intents = classifier.classify(accesses)
+    intents = classifier.classify(project.accesses)
     print(f"✓")
 
     if args.verbose >= 1:
         for intent in intents:
             print(f"  • {intent.intent_type.value}: {intent.accesses[0].path}")
 
-    print(f"[4/4] Generating policy... ", end='', flush=True)
+    print(f"[3/3] Generating policy... ", end='', flush=True)
 
     te_gen = TEGenerator(module_name)
-    policy = te_gen.generate(intents, service_info=service_info)
+    policy = te_gen.generate(intents, service_info=project.service_info)
 
     fc_gen = FCGenerator(module_name, exec_path=exec_path)
-    contexts = fc_gen.generate(intents, service_info=service_info)
+    contexts = fc_gen.generate(intents, service_info=project.service_info)
 
     te_writer = TEWriter()
     fc_writer = FCWriter()

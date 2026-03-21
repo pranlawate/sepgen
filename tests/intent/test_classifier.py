@@ -41,4 +41,4 @@ def test_classify_unknown_access():
     access = Access(access_type=AccessType.FILE_READ, path="/tmp/random_file.txt", syscall="open")
     intents = classifier.classify([access])
     assert len(intents) == 1
-    assert intents[0].intent_type == IntentType.UNKNOWN
+    assert intents[0].intent_type == IntentType.TEMP_FILE

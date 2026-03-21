@@ -46,6 +46,47 @@ class VarRunRule(ClassificationRule):
         return IntentType.PID_FILE
 
 
+class PathPrefixRule(ClassificationRule):
+    """Route file accesses by well-known path prefixes.
+
+    Uses a table-driven approach inspired by sepolicy generate's
+    path-based routing for log, tmp, data, and lib directories.
+    """
+
+    PREFIX_TABLE = [
+        ("/var/log/", IntentType.LOG_FILE),
+        ("/var/tmp/", IntentType.TEMP_FILE),
+        ("/tmp/", IntentType.TEMP_FILE),
+        ("/var/lib/", IntentType.DATA_DIR),
+        ("/var/cache/", IntentType.DATA_DIR),
+    ]
+
+    FILE_TYPES = [
+        AccessType.FILE_READ,
+        AccessType.FILE_WRITE,
+        AccessType.FILE_CREATE,
+        AccessType.FILE_UNLINK,
+        AccessType.FILE_SETATTR,
+        AccessType.DIR_READ,
+        AccessType.DIR_WRITE,
+    ]
+
+    def __init__(self):
+        self._matched_intent = None
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in self.FILE_TYPES:
+            return False
+        for prefix, intent_type in self.PREFIX_TABLE:
+            if access.path.startswith(prefix):
+                self._matched_intent = intent_type
+                return True
+        return False
+
+    def get_intent_type(self) -> IntentType:
+        return self._matched_intent
+
+
 class PidFileRule(ClassificationRule):
     """Classify PID file accesses"""
 
@@ -148,6 +189,7 @@ class NetworkServerRule(ClassificationRule):
 
 DEFAULT_RULES = [
     VarRunRule(),
+    PathPrefixRule(),
     PidFileRule(),
     ConfigFileRule(),
     SyslogRule(),

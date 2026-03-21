@@ -21,19 +21,29 @@ class ServiceDetector:
 
     EXEC_START_PATTERN = re.compile(r'ExecStart\s*=\s*(.+)')
 
-    def detect_service_files(self, project_dir: Path) -> ServiceInfo:
+    def detect_service_files(self, project_dir: Path, search_parent: bool = False) -> ServiceInfo:
         """Scan project directory for service and init files."""
         info = ServiceInfo()
 
-        for service_file in project_dir.rglob("*.service"):
-            info.has_service_file = True
-            content = service_file.read_text()
-            match = self.EXEC_START_PATTERN.search(content)
-            if match:
-                exec_line = match.group(1).strip()
-                info.exec_path = exec_line.split()[0]
+        search_dirs = [project_dir]
+        if search_parent:
+            parent = project_dir.parent
+            if parent != project_dir:
+                search_dirs.append(parent)
 
-        for init_file in project_dir.rglob("*.init"):
-            info.has_init_script = True
+        for search_dir in search_dirs:
+            for service_file in search_dir.rglob("*.service"):
+                info.has_service_file = True
+                content = service_file.read_text()
+                match = self.EXEC_START_PATTERN.search(content)
+                if match:
+                    exec_line = match.group(1).strip()
+                    info.exec_path = exec_line.split()[0]
+
+            for init_file in search_dir.rglob("*.init"):
+                info.has_init_script = True
+
+            if info.has_service_file or info.has_init_script:
+                break
 
         return info
