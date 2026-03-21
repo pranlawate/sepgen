@@ -1,0 +1,13 @@
+execve("/usr/bin/testapp", ["testapp"], 0x7ffd... /* 24 vars */) = 0
+open("/etc/testapp.conf", O_RDONLY) = 3
+read(3, "port=8080\n", 4096) = 10
+close(3) = 0
+open("/var/run/testapp.pid", O_WRONLY|O_CREAT, 0644) = 3
+write(3, "12345\n", 6) = 6
+close(3) = 0
+socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3
+bind(3, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+listen(3, 5) = 0
+connect(4, {sa_family=AF_UNIX, sun_path="/dev/log"}, 110) = 0
+sendto(4, "<30>testapp: started\n", 21, 0, NULL, 0) = 21
+open("/nonexistent", O_RDONLY) = -1 ENOENT (No such file or directory)
