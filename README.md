@@ -274,19 +274,20 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** Active Development (MVP)
+**Phase:** MVP Complete
 
 Implemented:
 - Core data models (Access, Intent, PolicyModule, FileContexts)
 - Static analysis pipeline (C analyzer with regex-based parsing)
 - Syscall mapper (C library function → syscall translation)
-
-In progress:
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine
-- Policy generation and serialization
-- Merge layer with conflict detection
-- CLI integration
+- Intent classification engine with deterministic rules
+- SELinux type generator and hybrid macro lookup
+- Policy generation (.te) and file context generation (.fc)
+- Policy serialization (TEWriter, FCWriter)
+- Merge layer with conflict detection and trace-wins strategy
+- CLI with `analyze` and `trace` commands
+- End-to-end integration tests
 
 Future enhancements:
 - Interactive tracing mode with live UI
