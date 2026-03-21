@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.0
-**Date:** 2026-03-21
-**Status:** Approved for Implementation
+**Version:** 1.2
+**Date:** 2026-03-22
+**Status:** Updated — analyzer improvements v2: deduplication, open(), manage macros, self:process, initrc generation, .fc regex patterns
 
 ---
 
@@ -41,26 +41,44 @@ The tool bridges the gap between `audit2allow` (generates raw allow rules) and h
 ### 2.1 System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     User Interface                           │
-│  Commands: analyze <source> | trace <binary> [-y] [-v]       │
-└────────────┬─────────────────────────┬────────────────────────┘
-             │                         │
-    ┌────────▼────────┐       ┌────────▼────────┐
-    │ Static Analysis │       │ Runtime Tracing │
-    │    Pipeline     │       │    Pipeline     │
-    └────────┬────────┘       └────────┬────────┘
-             │                         │
-             └──────────┬──────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     User Interface                              │
+│  Commands: analyze <source|dir> | trace <binary> [-y] [-v]      │
+└────────────┬──────────────────────────┬─────────────────────────┘
+             │                          │
+    ┌────────▼──────────────┐  ┌────────▼────────┐
+    │  Static Analysis      │  │ Runtime Tracing │
+    │  Pipeline             │  │    Pipeline     │
+    │ ┌───────────────────┐ │  └────────┬────────┘
+    │ │ Preprocessor      │ │           │
+    │ │ (#define resolve) │ │           │
+    │ ├───────────────────┤ │           │
+    │ │ IncludeAnalyzer   │ │           │
+    │ │ (header inference)│ │           │
+    │ ├───────────────────┤ │           │
+    │ │ DataFlowAnalyzer  │ │           │
+    │ │ (variable paths)  │ │           │
+    │ ├───────────────────┤ │           │
+    │ │ CAnalyzer         │ │           │
+    │ │ (15+ patterns)    │ │           │
+    │ ├───────────────────┤ │           │
+    │ │ ServiceDetector   │ │           │
+    │ │ (.service/.init)  │ │           │
+    │ └───────────────────┘ │           │
+    └────────┬──────────────┘           │
+             │                          │
+             └──────────┬───────────────┘
                         │
                 ┌───────▼────────┐
                 │ Unified Intent │
-                │  Classification│
+                │ Classification │
                 └───────┬────────┘
                         │
                 ┌───────▼────────┐
                 │ Policy Object  │
-                │  Generation    │
+                │ Generation     │
+                │ (macros +      │
+                │  self: rules)  │
                 └───────┬────────┘
                         │
             ┌───────────▼───────────┐
@@ -100,8 +118,12 @@ The tool bridges the gap between `audit2allow` (generates raw allow rules) and h
 **Components**:
 
 - `BaseAnalyzer`: Abstract interface for language-specific analyzers
-- `CAnalyzer`: C/C++ source analyzer (MVP: regex-based, designed for tree-sitter upgrade)
+- `CAnalyzer`: C/C++ source analyzer (regex-based, designed for tree-sitter upgrade)
 - `SyscallMapper`: Maps language calls (fopen, socket) to syscalls (open, socket)
+- `Preprocessor`: Resolves `#define` string constants before pattern matching
+- `IncludeAnalyzer`: Infers capabilities from `#include` headers
+- `DataFlowAnalyzer`: Tracks string variable assignments to resolve indirect paths
+- `ServiceDetector`: Finds `.service` and `.init` files for exec paths and initrc types
 
 **Design**:
 
@@ -115,31 +137,139 @@ class BaseAnalyzer(ABC):
 class CAnalyzer(BaseAnalyzer):
     def __init__(self):
         self.mapper = SyscallMapper()
-        self.parser = RegexParser()  # Swappable with TreeSitterParser later
+        self.preprocessor = Preprocessor()
+        self.include_analyzer = IncludeAnalyzer()
+        self.dataflow = DataFlowAnalyzer()
 
     def analyze_file(self, path: Path) -> List[Access]:
         code = path.read_text()
-        function_calls = self.parser.extract_calls(code)
-        return [self.mapper.map_to_syscall(call) for call in function_calls]
+        return self.analyze_string(code)
 
-class SyscallMapper:
-    """Direct mapping only for MVP"""
-    DIRECT_MAPPINGS = {
-        'fopen': 'open',
-        'socket': 'socket',
-        'bind': 'bind',
-        'connect': 'connect',
-    }
+    def analyze_directory(self, dir_path: Path) -> List[Access]:
+        """Analyze all .c files in a directory recursively"""
+        accesses = []
+        for c_file in dir_path.rglob("*.c"):
+            accesses.extend(self.analyze_file(c_file))
+        return accesses
 
-    def map_to_syscall(self, function_call: FunctionCall) -> Access:
-        syscall_name = self.DIRECT_MAPPINGS.get(function_call.name)
-        # Extract args, determine access type, return Access object
+    def analyze_string(self, code: str) -> List[Access]:
+        """Full analysis pipeline on a code string"""
+        # 1. Resolve #define constants
+        defines = self.preprocessor.extract_defines(code)
+        expanded = self.preprocessor.expand_macros(code, defines)
+
+        # 2. Extract variable-to-string assignments
+        self.dataflow.string_vars = self.dataflow.extract_string_assignments(expanded)
+
+        # 3. Run all detection patterns on expanded code
+        accesses = []
+        accesses.extend(self._detect_fopen(expanded))
+        accesses.extend(self._detect_open(expanded))
+        accesses.extend(self._detect_socket(expanded))
+        accesses.extend(self._detect_bind(expanded))
+        accesses.extend(self._detect_listen(expanded))
+        accesses.extend(self._detect_accept(expanded))
+        accesses.extend(self._detect_syslog(expanded))
+        accesses.extend(self._detect_unlink(expanded))
+        accesses.extend(self._detect_chmod(expanded))
+        accesses.extend(self._detect_setrlimit(expanded))
+        accesses.extend(self._detect_capabilities(expanded))
+        accesses.extend(self._detect_daemon(expanded))
+        return accesses
 ```
 
+**Sub-component: Preprocessor**
+
+```python
+class Preprocessor:
+    DEFINE_PATTERN = re.compile(r'#define\s+(\w+)\s+"([^"]+)"')
+
+    def extract_defines(self, code: str) -> Dict[str, str]:
+        """Extract all #define string constants"""
+
+    def expand_macros(self, text: str, defines: Dict[str, str]) -> str:
+        """Replace macro names with their quoted string values"""
+```
+
+Resolves constants like `#define SETRANS_UNIX_SOCKET "/var/run/setrans/.setrans-unix"` so that downstream patterns can extract the path from `unlink(SETRANS_UNIX_SOCKET)`.
+
+**Sub-component: IncludeAnalyzer**
+
+```python
+class IncludeAnalyzer:
+    INCLUDE_PATTERN = re.compile(r'#include\s+[<"]([^>"]+)[>"]')
+
+    CAPABILITY_MAP = {
+        'syslog.h': ['syslog'],
+        'sys/socket.h': ['socket'],
+        'sys/capability.h': ['capability', 'process_setcap'],
+        'sys/resource.h': ['setrlimit'],
+        'signal.h': ['signal_perms'],
+    }
+
+    def infer_capabilities(self, code: str) -> List[str]:
+        """Infer likely capabilities from included headers"""
+```
+
+Provides early hints even when function calls are wrapped in helper functions or macros that the regex-based analyzer cannot follow.
+
+**Sub-component: DataFlowAnalyzer**
+
+```python
+class DataFlowAnalyzer:
+    VAR_ASSIGN_PATTERN = re.compile(r'(?:const\s+)?char\s*\*\s*(\w+)\s*=\s*"([^"]+)"')
+
+    def extract_string_assignments(self, code: str) -> Dict[str, str]:
+        """Extract variable-to-string assignments (e.g. char *path = "/etc/foo")"""
+
+    def resolve_variable(self, var_name: str) -> Optional[str]:
+        """Resolve a variable name to its string literal value"""
+```
+
+Enables detection of calls like `fopen(config_file, "r")` where `config_file` was assigned a string literal earlier.
+
+**Sub-component: ServiceDetector**
+
+```python
+@dataclass
+class ServiceInfo:
+    has_systemd_service: bool = False
+    has_init_script: bool = False
+    exec_path: Optional[str] = None
+    needs_initrc_exec_t: bool = False
+
+class ServiceDetector:
+    def detect_service_files(self, project_dir: Path) -> ServiceInfo:
+        """Find .service and .init files, extract exec path"""
+```
+
+Examines the source tree alongside `.c` files to find systemd unit files and init scripts, providing the executable path for `.fc` generation and confirming that `_initrc_exec_t` types are needed.
+
+**Detection patterns** (15+ in CAnalyzer):
+
+| Pattern | Function calls detected | AccessType produced |
+|---------|------------------------|---------------------|
+| File open (fopen) | `fopen()` (literal + variable paths) | `FILE_READ`, `FILE_WRITE` |
+| File open (open) | `open()` with O_RDONLY/O_WRONLY/O_CREAT flags | `FILE_READ`, `FILE_WRITE`, `FILE_CREATE` |
+| Socket create | `socket(PF_UNIX\|AF_INET\|...)` | `SOCKET_CREATE` (with domain in details) |
+| Socket bind | `bind()` (propagates domain from socket) | `SOCKET_BIND` (with domain in details) |
+| Socket listen | `listen()` | `SOCKET_LISTEN` |
+| Socket accept | `accept()` | `SOCKET_ACCEPT` |
+| Syslog | `syslog()`, `openlog()`, `vsyslog()` (deduplicated) | `SYSLOG` |
+| File delete | `unlink()`, `remove()` | `FILE_UNLINK` |
+| File attributes | `chmod()`, `chown()` | `FILE_SETATTR` |
+| Resource limits | `setrlimit()` | `PROCESS_CONTROL` (with `capability: "sys_resource"`) |
+| Capabilities | `cap_init()`, `cap_set_proc()`, `cap_get_proc()` | `CAPABILITY` |
+| Daemonize | `daemon()` | `DAEMON` |
+
+**Deduplication**: Some patterns (notably syslog) may match dozens of times in a single file. The analyzer deduplicates by emitting only one Access per distinct function name. One `logging_send_syslog_msg()` macro is sufficient regardless of how many `syslog()` calls exist.
+
 **Key decisions**:
-- Regex parsing for MVP (handles common patterns, fast to implement)
+- Regex parsing for now (handles common patterns, fast to implement)
 - Interface designed for tree-sitter swap later
-- Direct syscall mappings only (no complex library call expansion)
+- Preprocessor expands `#define` constants before pattern matching
+- DataFlowAnalyzer resolves simple `char *var = "..."` assignments
+- Multi-file directory analysis aggregates results across all `.c` files
 - Returns same `Access` objects as trace pipeline
 
 ---
@@ -199,19 +329,65 @@ class StraceParser:
 **Data models**:
 
 ```python
+class AccessType(Enum):
+    # File operations
+    FILE_READ = "file_read"
+    FILE_WRITE = "file_write"
+    FILE_CREATE = "file_create"
+    FILE_UNLINK = "file_unlink"
+    FILE_SETATTR = "file_setattr"       # chmod, chown
+    DIR_READ = "dir_read"
+    DIR_WRITE = "dir_write"
+
+    # Socket operations
+    SOCKET_CREATE = "socket_create"
+    SOCKET_BIND = "socket_bind"
+    SOCKET_LISTEN = "socket_listen"
+    SOCKET_CONNECT = "socket_connect"
+    SOCKET_ACCEPT = "socket_accept"
+
+    # IPC
+    IPC_SYSV = "ipc_sysv"
+    IPC_POSIX = "ipc_posix"
+
+    # Logging
+    SYSLOG = "syslog"                   # openlog/syslog/vsyslog
+
+    # Process/capability operations
+    PROCESS_CONTROL = "process_control" # setrlimit, setpriority
+    CAPABILITY = "capability"           # cap_init, cap_set_proc
+    DAEMON = "daemon"                   # daemon() call
+
+class IntentType(Enum):
+    CONFIG_FILE = "config_file"
+    PID_FILE = "pid_file"
+    DATA_DIR = "data_dir"
+    LOG_FILE = "log_file"
+    TEMP_FILE = "temp_file"
+    NETWORK_SERVER = "network_server"       # AF_INET/PF_INET bind
+    NETWORK_CLIENT = "network_client"
+    UNIX_SOCKET_SERVER = "unix_socket_server"  # PF_UNIX/AF_UNIX bind
+    SYSLOG = "syslog"
+    SELF_CAPABILITY = "self_capability"     # capability + process rules
+    DAEMON_PROCESS = "daemon_process"       # confirms init_daemon_domain
+    TERMINAL_IO = "terminal_io"
+    SHARED_LIBRARY = "shared_library"
+    UNKNOWN = "unknown"
+
 @dataclass
 class Access:
     """Raw system access (from analyzer or tracer)"""
-    access_type: AccessType     # FILE_READ, SOCKET_BIND, etc.
+    access_type: AccessType     # FILE_READ, SOCKET_BIND, SYSLOG, etc.
     path: str                   # File path or "tcp:8080"
     syscall: str                # "open", "bind", "socket"
-    details: Dict[str, Any]     # Flags, ports, etc.
-    source_line: Optional[int]  # For static analysis
+    details: Dict[str, Any]     # Flags, ports, domain, capability, etc.
+    source_file: Optional[str]  # File where access was found
+    source_line: Optional[int]  # Line number in source
 
 @dataclass
 class Intent:
     """Classified security intent"""
-    intent_type: IntentType         # CONFIG_FILE, PID_FILE, NETWORK_SERVER
+    intent_type: IntentType         # CONFIG_FILE, PID_FILE, UNIX_SOCKET_SERVER
     accesses: List[Access]          # All accesses for this intent
     confidence: float = 1.0         # Always 1.0 for deterministic rules
     selinux_type: Optional[str]     # e.g., "myapp_conf_t"
@@ -224,11 +400,14 @@ class Intent:
 class IntentClassifier:
     def __init__(self):
         self.rules = [
-            PidFileRule(),      # /var/run/*.pid + write → PID_FILE
-            ConfigFileRule(),   # /etc/** + read → CONFIG_FILE
-            DataDirRule(),      # /var/*/data/** + write → DATA_DIR
-            SyslogRule(),       # /dev/log + connect → SYSLOG
-            NetworkServerRule(), # bind() → NETWORK_SERVER
+            PidFileRule(),           # /var/run/*.pid + write → PID_FILE
+            ConfigFileRule(),        # /etc/** + read → CONFIG_FILE
+            DataDirRule(),           # /var/*/data/** + write → DATA_DIR
+            SyslogRule(),            # SYSLOG access type → SYSLOG
+            UnixSocketRule(),        # SOCKET_BIND + PF_UNIX → UNIX_SOCKET_SERVER
+            NetworkServerRule(),     # SOCKET_BIND + AF_INET → NETWORK_SERVER
+            SelfCapabilityRule(),    # CAPABILITY/PROCESS_CONTROL → SELF_CAPABILITY
+            DaemonProcessRule(),     # DAEMON → DAEMON_PROCESS
         ]
 
     def classify(self, accesses: List[Access]) -> List[Intent]:
@@ -240,18 +419,30 @@ class IntentClassifier:
                     intents.append(Intent(
                         intent_type=rule.get_intent_type(),
                         accesses=[access],
-                        confidence=1.0
+                        confidence=rule.get_confidence()
                     ))
                     break
+            else:
+                intents.append(Intent(
+                    intent_type=IntentType.UNKNOWN,
+                    accesses=[access],
+                    confidence=0.5
+                ))
         return intents
 ```
 
 **Classification rules (deterministic)**:
-- `/var/run/*.pid` + write → PID_FILE
-- `/etc/**` + read → CONFIG_FILE
-- `/var/*/data/**` + write → DATA_DIR
-- `/dev/log` + connect → SYSLOG
-- `bind()` → NETWORK_SERVER
+
+| Rule | Condition | IntentType |
+|------|-----------|------------|
+| PidFileRule | `/var/run/*.pid` + write | PID_FILE |
+| ConfigFileRule | `/etc/**` + read, `*.conf`, `*.cfg`, etc. | CONFIG_FILE |
+| DataDirRule | `/var/*/data/**` + write | DATA_DIR |
+| SyslogRule | `access_type == SYSLOG` | SYSLOG |
+| UnixSocketRule | `SOCKET_BIND` + domain in `[PF_UNIX, AF_UNIX]` | UNIX_SOCKET_SERVER |
+| NetworkServerRule | `SOCKET_BIND` + domain in `[AF_INET, PF_INET, AF_INET6]` | NETWORK_SERVER |
+| SelfCapabilityRule | `access_type in [CAPABILITY, PROCESS_CONTROL]` | SELF_CAPABILITY |
+| DaemonProcessRule | `access_type == DAEMON` | DAEMON_PROCESS |
 
 ---
 
@@ -294,61 +485,176 @@ class TEGenerator:
         self.type_generator = TypeGenerator()
         self.macro_lookup = MacroLookup()
 
-    def generate(self, intents: List[Intent]) -> PolicyModule:
-        """Generate PolicyModule object (not string)"""
+    def generate(self, intents: List[Intent], service_info=None) -> PolicyModule:
+        """Generate PolicyModule from classified intents and optional ServiceInfo"""
         policy = PolicyModule(name=self.module_name, version="1.0.0")
 
         # Add base types
-        policy.types.append(TypeDeclaration(f"{self.module_name}_t"))
-        policy.types.append(TypeDeclaration(f"{self.module_name}_exec_t"))
+        policy.add_type(f"{self.module_name}_t")
+        policy.add_type(f"{self.module_name}_exec_t")
+        policy.add_macro("init_daemon_domain", [
+            f"{self.module_name}_t", f"{self.module_name}_exec_t"
+        ])
 
-        # Process each intent
         for intent in intents:
             # Generate custom type if needed
             custom_type = self.type_generator.generate_type_name(
                 self.module_name, intent
             )
             if custom_type:
-                policy.types.append(TypeDeclaration(custom_type))
+                policy.add_type(custom_type)
                 intent.selinux_type = custom_type
 
-            # Lookup appropriate macro
+                # Add type-specific declaration macros
+                if "_var_run_t" in custom_type:
+                    policy.add_macro("files_pid_file", [custom_type])
+                    policy.add_macro("files_pid_filetrans", [
+                        f"{self.module_name}_t", custom_type, "{{ file dir }}"
+                    ])
+                    # Manage macros for runtime directory access
+                    policy.add_macro("manage_dirs_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                    policy.add_macro("manage_files_pattern", [
+                        f"{self.module_name}_t", custom_type, custom_type
+                    ])
+                elif intent.intent_type.value in ['config_file', 'data_dir']:
+                    policy.add_macro("files_type", [custom_type])
+
+            # Lookup appropriate macro for the intent
             macro = self.macro_lookup.suggest_macro(intent)
             if macro:
-                policy.macro_calls.append(MacroCall(macro, [f"{self.module_name}_t"]))
+                policy.add_macro(macro, [...])
+
+        # Collect self: rule permissions across all intents
+        cap_perms = set()
+        process_perms = set()
+        has_unix_socket = False
+
+        for intent in intents:
+            if intent.intent_type == IntentType.SELF_CAPABILITY:
+                for access in intent.accesses:
+                    if access.access_type == AccessType.PROCESS_CONTROL:
+                        cap = access.details.get("capability")
+                        if cap:
+                            cap_perms.add(cap)
+                        process_perms.add("setrlimit")
+                    elif access.access_type == AccessType.CAPABILITY:
+                        process_perms.update(["getcap", "setcap"])
+
+            elif intent.intent_type == IntentType.UNIX_SOCKET_SERVER:
+                has_unix_socket = True
+
+        # Emit consolidated self: rules
+        if cap_perms:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="capability",
+                permissions=sorted(cap_perms)
+            ))
+        if process_perms:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="process",
+                permissions=sorted(process_perms)
+            ))
+        if has_unix_socket:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="unix_stream_socket",
+                permissions=["create", "bind", "listen", "accept"]
+            ))
+            # If var_run type exists, also add sock file management
+            for intent in intents:
+                if intent.selinux_type and "_var_run_t" in intent.selinux_type:
+                    policy.add_macro("manage_sock_files_pattern", [
+                        f"{self.module_name}_t", intent.selinux_type, intent.selinux_type
+                    ])
+
+        # If init script detected via ServiceInfo, add initrc type
+        if service_info and service_info.needs_initrc_exec_t:
+            initrc_type = f"{self.module_name}_initrc_exec_t"
+            policy.add_type(initrc_type)
+            policy.add_macro("init_script_file", [initrc_type])
 
         return policy
 
 class FCGenerator:
-    def generate(self, intents: List[Intent], exec_path: str) -> FileContexts:
-        """Generate FileContexts object (not string)"""
+    def __init__(self, module_name: str, exec_path: Optional[str] = None):
+        self.module_name = module_name
+        self.exec_path = exec_path
+
+    def generate(self, intents: List[Intent], service_info=None) -> FileContexts:
+        """Generate FileContexts from intents, known paths, and service info"""
         contexts = FileContexts()
 
         # Add executable context
-        if exec_path:
-            contexts.entries.append(FileContextEntry(
-                path=exec_path,
-                type=f"{self.module_name}_exec_t"
-            ))
+        if self.exec_path:
+            contexts.add_entry(self.exec_path, f"{self.module_name}_exec_t")
 
-        # Extract file paths from intents
+        # Add initrc context from service detection
+        if service_info and service_info.has_init_script:
+            contexts.add_entry(
+                f"/etc/rc.d/init.d/{self.module_name}",
+                f"{self.module_name}_initrc_exec_t"
+            )
+
+        # Add paths from classified intents
         for intent in intents:
-            if intent.selinux_type:
-                for access in intent.accesses:
-                    contexts.entries.append(FileContextEntry(
-                        path=access.path,
-                        type=intent.selinux_type
-                    ))
+            if not intent.selinux_type:
+                continue
+            for access in intent.accesses:
+                if access.path and access.path.startswith("/"):
+                    fc_path = self._path_to_fc_regex(access.path, intent.selinux_type)
+                    contexts.add_entry(fc_path, intent.selinux_type)
 
         return contexts
+
+    def _path_to_fc_regex(self, path: str, selinux_type: str) -> str:
+        """Convert paths to .fc regex patterns.
+
+        Runtime dirs (var_run_t) get regex for the parent directory
+        (e.g., /run/setrans(/.*)?) since SELinux labels directory trees.
+        """
+        if "_var_run_t" in selinux_type:
+            # Generate regex for directory tree
+            parts = Path(path).parts
+            for i, part in enumerate(parts):
+                if part in ("run", "var"):
+                    if i + 1 < len(parts) and parts[i + 1] != "run":
+                        return "/".join(parts[:i + 2]) + "(/.*)?"
+                    elif i + 2 < len(parts):
+                        return "/".join(parts[:i + 3]) + "(/.*)?"
+        return path
 ```
 
 **Type generation rules**:
-- Process domain: `{module}_t`
-- Executable: `{module}_exec_t`
-- Config files: `{module}_conf_t` (paths under `/etc/{module}/`)
-- Data directories: `{module}_data_t` (paths under `/var/{module}/`)
-- PID files: `{module}_var_run_t` (paths under `/var/run/`)
+
+| Intent | Generated type | Declaration macro |
+|--------|---------------|-------------------|
+| (base) | `{module}_t` | — |
+| (base) | `{module}_exec_t` | `init_daemon_domain()` |
+| CONFIG_FILE | `{module}_conf_t` | `files_type()` |
+| PID_FILE | `{module}_var_run_t` | `files_pid_file()` + `files_pid_filetrans()` + `manage_dirs_pattern()` + `manage_files_pattern()` |
+| PID_FILE + UNIX_SOCKET_SERVER | `{module}_var_run_t` | Above + `manage_sock_files_pattern()` |
+| DATA_DIR | `{module}_data_t` | `files_type()` |
+| LOG_FILE | `{module}_log_t` | `logging_log_file()` |
+| DAEMON_PROCESS | (confirms `init_daemon_domain` is correct) | — |
+| ServiceInfo (init script) | `{module}_initrc_exec_t` | `init_script_file()` |
+
+**self: allow rule generation**:
+
+Rules are collected across all intents and emitted as consolidated allow statements (one `self:capability`, one `self:process`, one `self:unix_stream_socket`):
+
+| IntentType / Source | Generated allow rule |
+|------------|---------------------|
+| SELF_CAPABILITY (setrlimit) | `allow {mod}_t self:capability sys_resource;` |
+| SELF_CAPABILITY (setrlimit) | `allow {mod}_t self:process setrlimit;` (companion) |
+| SELF_CAPABILITY (cap_*) | `allow {mod}_t self:process { getcap setcap };` |
+| UNIX_SOCKET_SERVER | `allow {mod}_t self:unix_stream_socket { create bind listen accept };` |
 
 ---
 
@@ -493,31 +799,62 @@ class MacroLookup:
         IntentType.DATA_DIR: "manage_files_pattern",
     }
 
+    # Intent types that produce self: allow rules instead of macros
+    SELF_RULE_INTENTS = {
+        IntentType.UNIX_SOCKET_SERVER,
+        IntentType.SELF_CAPABILITY,
+    }
+
+    # Intent types that confirm existing macros rather than adding new ones
+    CONFIRMATION_INTENTS = {
+        IntentType.DAEMON_PROCESS,  # confirms init_daemon_domain is correct
+    }
+
     def suggest_macro(self, intent: Intent) -> Optional[str]:
         """Hardcoded first, semacro fallback"""
-        # Fast path
+        if intent.intent_type in self.SELF_RULE_INTENTS:
+            return None  # handled by TEGenerator as allow rules
+
+        if intent.intent_type in self.CONFIRMATION_INTENTS:
+            return None  # no new macro needed
+
         if intent.intent_type in self.KNOWN_MAPPINGS:
             return self.KNOWN_MAPPINGS[intent.intent_type]
 
         # Fallback to semacro
-        from semacro import search_macros
-        results = search_macros(intent_type=intent.intent_type.value)
-        return results[0] if results else None
+        if self.semacro_available:
+            from semacro import search_macros
+            results = search_macros(intent_type=intent.intent_type.value)
+            return results[0] if results else None
+
+        return None
 ```
+
+Note on `NETWORK_SERVER` vs `UNIX_SOCKET_SERVER`: The `corenet_tcp_bind_generic_node` macro only applies to TCP/UDP sockets (`AF_INET`, `PF_INET`, `AF_INET6`). Unix domain sockets (`PF_UNIX`, `AF_UNIX`) produce `self:unix_stream_socket` allow rules instead, which are generated directly by `TEGenerator`.
 
 **Type generation**:
 
 ```python
 class TypeGenerator:
+    TYPE_MAPPING = {
+        IntentType.CONFIG_FILE: "{module}_conf_t",
+        IntentType.PID_FILE: "{module}_var_run_t",
+        IntentType.DATA_DIR: "{module}_data_t",
+        IntentType.LOG_FILE: "{module}_log_t",
+    }
+
     def generate_type_name(self, module_name: str, intent: Intent) -> Optional[str]:
         """Create type name based on intent"""
-        mapping = {
-            IntentType.CONFIG_FILE: f"{module_name}_conf_t",
-            IntentType.PID_FILE: f"{module_name}_var_run_t",
-            IntentType.DATA_DIR: f"{module_name}_data_t",
-            IntentType.LOG_FILE: f"{module_name}_log_t",
-        }
-        return mapping.get(intent.intent_type)
+        template = self.TYPE_MAPPING.get(intent.intent_type)
+        if template:
+            return template.format(module=module_name)
+
+        # Path-based fallback: /var/run/** paths get _var_run_t
+        path = intent.accesses[0].path if intent.accesses else ""
+        if path.startswith(("/var/run/", "/run/")):
+            return f"{module_name}_var_run_t"
+
+        return None
 ```
 
 **Integration points**:
@@ -588,9 +925,11 @@ Generated: myapp.te (23 lines), myapp.fc (4 entries)
 **Commands**:
 
 ```bash
-sepgen analyze <source-path> [--name MODULE_NAME] [-v] [-vv]
+sepgen analyze <source-path-or-directory> [--name MODULE_NAME] [-v] [-vv]
 sepgen trace <binary> [--args "ARGS"] [--pid PID] [-v] [-vv] [-y]
 ```
+
+When `<source-path-or-directory>` is a directory, all `.c` files are analyzed recursively and results are aggregated. Service files (`.service`, `.init`) are also detected in the directory tree.
 
 **Verbosity levels**:
 
@@ -626,8 +965,10 @@ Generated: myapp.te (23 lines), myapp.fc (4 entries)
   • SYSLOG: /dev/log
 
 [4/4] Generating policy... ✓
-  Generated types: myapp_t, myapp_conf_t, myapp_var_run_t
-  Applied macros: logging_send_syslog_msg, files_pid_filetrans
+  Generated types: myapp_t, myapp_conf_t, myapp_var_run_t, myapp_initrc_exec_t
+  Applied macros: logging_send_syslog_msg, files_pid_filetrans,
+    manage_dirs_pattern, manage_files_pattern, init_script_file
+  Self rules: self:capability { sys_resource }, self:process { setrlimit }
 
 Generated: myapp.te (23 lines), myapp.fc (4 entries)
 ```
@@ -688,36 +1029,48 @@ Generated: myapp.te (27 lines), myapp.fc (6 entries)
 
 ```
 tests/
-├── unit/
-│   ├── analyzer/
-│   │   ├── test_c_analyzer.py
-│   │   └── test_syscall_mapper.py
-│   ├── tracer/
-│   │   ├── test_strace_parser.py
-│   │   └── test_process_tracer.py
-│   ├── intent/
-│   │   ├── test_classifier.py
-│   │   └── test_rules.py
-│   ├── selinux/
-│   │   ├── test_macro_lookup.py
-│   │   └── test_type_generator.py
-│   ├── generator/
-│   │   ├── test_te_generator.py
-│   │   └── test_fc_generator.py
-│   └── merger/
-│       ├── test_policy_merger.py
-│       └── test_merge_strategies.py
+├── analyzer/
+│   ├── test_c_analyzer.py
+│   ├── test_syscall_mapper.py
+│   ├── test_syslog_detection.py
+│   ├── test_socket_server_detection.py
+│   ├── test_define_resolution.py
+│   ├── test_file_manipulation.py      # unlink, chmod, open
+│   ├── test_socket_types.py
+│   ├── test_include_analysis.py
+│   ├── test_capability_detection.py
+│   ├── test_daemon_detection.py
+│   ├── test_variable_tracking.py
+│   └── test_service_detection.py
+├── tracer/
+│   ├── test_strace_parser.py
+│   └── test_process_tracer.py
+├── intent/
+│   ├── test_classifier.py
+│   └── test_rules.py
+├── selinux/
+│   ├── test_macro_lookup.py
+│   └── test_type_generator.py
+├── generator/
+│   ├── test_te_generator.py
+│   ├── test_fc_generator.py
+│   ├── test_fc_from_analysis.py
+│   ├── test_var_run_types.py
+│   ├── test_self_rules.py
+│   └── test_writers.py
+├── merger/
+│   └── test_policy_merger.py
 ├── integration/
-│   ├── test_analyze_pipeline.py
-│   ├── test_trace_pipeline.py
-│   ├── test_merge_workflow.py
-│   └── test_cli_e2e.py
-└── fixtures/
-    ├── sample_c_program.c
-    ├── strace_output.txt
-    └── existing_policy/
-        ├── myapp.te
-        └── myapp.fc
+│   ├── test_e2e.py
+│   ├── test_multi_file_analysis.py
+│   └── test_mcstransd_coverage.py
+├── fixtures/
+│   ├── sample_c_program.c
+│   └── strace_output.txt
+└── models/
+    ├── test_access.py
+    ├── test_intent.py
+    └── test_policy.py
 ```
 
 **TDD approach**:
@@ -741,18 +1094,31 @@ tests/
 ### 4.1 Analyze Workflow
 
 ```
-Source Code (.c/.py files)
+Source Code (file or directory)
     ↓
-CAnalyzer.analyze_file()
+[If directory]
+    ServiceDetector.detect_service_files()  → exec_path, initrc type hints
+    CAnalyzer.analyze_directory()           → iterates all .c files
+[If single file]
+    CAnalyzer.analyze_file()
     ↓
-List[Access] (predicted syscalls)
+Per-file pipeline:
+    Preprocessor.extract_defines()          → resolve #define constants
+    Preprocessor.expand_macros()            → substitute into code
+    DataFlowAnalyzer.extract_string_assignments() → resolve variable paths
+    IncludeAnalyzer.infer_capabilities()    → supplementary hints from headers
+    CAnalyzer detection patterns (15+)      → extract function calls
+    ↓
+List[Access] (aggregated predicted syscalls from all files)
     ↓
 IntentClassifier.classify()
     ↓
 List[Intent] (classified intents)
     ↓
-TEGenerator.generate() → PolicyModule object
-FCGenerator.generate() → FileContexts object
+TEGenerator.generate(intents, service_info) → PolicyModule object
+    (types + macros + manage_*_pattern + self: rules + initrc type)
+FCGenerator.generate(intents, service_info) → FileContexts object
+    (exec path + initrc entry + regex patterns for var_run dirs)
     ↓
 Check for existing .te/.fc files
     ↓
@@ -909,6 +1275,12 @@ The implementation is successful when:
 ### 8.2 Validation Against Real Policies
 
 As development progresses, validate classification rules and type generation against existing policies in `/usr/share/selinux/devel/include/`. This ensures generated policies match community conventions.
+
+**Primary validation target**: `mcstransd` (SELinux MCS label translation daemon)
+- Source: `testing/mcstrans/src/` (copied from `selinux/mcstrans/src/`)
+- Reference policy: `testing/mcstrans/reference-policy/setrans.{te,fc,if}` (from `selinux-policy`)
+- Baseline report: `testing/mcstrans/ANALYSIS_REPORT.md`
+- Coverage target: 60-70% of reference policy (up from ~8% baseline)
 
 ### 8.3 Component Interfaces
 

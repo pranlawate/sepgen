@@ -21,9 +21,11 @@ You still end up manually rewriting everything.
 
 sepgen takes a dual-mode approach to policy generation:
 
-1. **Static analysis** (primary) — Reads your source code, identifies syscall
-   patterns (`fopen`, `socket`, `bind`), and predicts what the application will
-   access at runtime. No execution needed.
+1. **Static analysis** (primary) — Reads your C source code (single file or
+   entire directory), resolves `#define` constants, tracks string variables,
+   identifies syscall patterns (`fopen`, `open`, `socket`, `bind`, `syslog`,
+   `setrlimit`, `cap_*`, `unlink`, `chmod`, `daemon`), and predicts what the
+   application will access at runtime. No execution needed.
 
 2. **Runtime tracing** (supplementary) — Traces the compiled binary with
    `strace` to observe actual syscalls. Use this when source code is unavailable
@@ -34,8 +36,9 @@ low-level accesses to high-level security intents and generates complete,
 macro-based policy modules.
 
 ```bash
-# Primary: generate policy from source code
+# Primary: generate policy from source code (single file or directory)
 sepgen analyze ./src/myapp.c --name myapp
+sepgen analyze ./src/ --name myapp
 
 # Supplementary: trace binary to validate/strengthen the policy
 sepgen trace /usr/bin/myapp -y
@@ -47,27 +50,36 @@ Output: `myapp.te`, `myapp.fc` — ready to compile and install.
 
 | Access observed | audit2allow | sepgen |
 |---|---|---|
-| Write to `/var/run/app.pid` | `allow app_t var_run_t:file write;` | Creates `app_var_run_t`, uses `files_pid_filetrans()` |
+| Write to `/var/run/app.pid` | `allow app_t var_run_t:file write;` | Creates `app_var_run_t`, uses `files_pid_filetrans()` + `manage_files_pattern()` |
 | Read `/etc/app.conf` | `allow app_t etc_t:file read;` | Creates `app_conf_t`, uses `read_files_pattern()` |
 | Write to `/var/app/data.txt` | `allow app_t var_t:file { create write };` | Creates `app_data_t`, uses `manage_files_pattern()` |
-| Syslog socket | `allow app_t devlog_t:sock_file write;` + 3 more rules | `logging_send_syslog_msg(app_t)` |
+| Syslog socket | `allow app_t devlog_t:sock_file write;` + 3 more rules | `logging_send_syslog_msg(app_t)` (deduplicated) |
 | Bind TCP port | `allow app_t port_t:tcp_socket name_bind;` | `corenet_tcp_bind_generic_port(app_t)` + port type |
-| `.fc` file | *(never generated)* | Full file context mapping |
+| Bind Unix socket | `allow app_t self:unix_stream_socket ...;` (many rules) | `allow app_t self:unix_stream_socket { create bind listen accept };` |
+| `setrlimit()` call | *(not generated)* | `allow app_t self:capability sys_resource;` + `self:process setrlimit;` |
+| Init script detected | *(not generated)* | Creates `app_initrc_exec_t`, uses `init_script_file()` |
+| `.fc` file | *(never generated)* | Full file context mapping with regex patterns |
 
 ## Usage
 
 ### Analyze: Generate policy from source code
 
 ```bash
-# Analyze a C source file
+# Analyze a single C source file
 sepgen analyze ./src/myapp.c --name myapp
 
+# Analyze an entire directory (all .c files + service file detection)
+sepgen analyze ./src/ --name myapp
+
 # Analyze with verbose output (shows classified intents)
-sepgen analyze ./src/myapp.c --name myapp -v
+sepgen analyze ./src/ --name myapp -v
 
 # Analyze with debug output
 sepgen analyze ./src/myapp.c --name myapp -vv
 ```
+
+When given a directory, sepgen analyzes all `.c` files recursively and also
+detects `.service` and `.init` files for executable paths and initrc types.
 
 Example output:
 ```
@@ -83,9 +95,15 @@ With `-v`:
 [2/3] Classifying intents... ✓
   • config_file: /etc/myapp.conf
   • pid_file: /var/run/myapp.pid
-  • network_server: tcp:8080
+  • syslog: /dev/log
+  • unix_socket_server: /var/run/myapp/.myapp-unix
+  • self_capability: sys_resource
 [3/3] Generating policy... ✓
-Generated: myapp.te (5 types), myapp.fc (3 entries)
+  Generated types: myapp_t, myapp_conf_t, myapp_var_run_t, myapp_initrc_exec_t
+  Applied macros: logging_send_syslog_msg, files_pid_filetrans,
+    manage_dirs_pattern, manage_files_pattern, init_script_file
+  Self rules: self:capability { sys_resource }, self:process { setrlimit }
+Generated: myapp.te (7 types), myapp.fc (4 entries)
 ```
 
 ### Trace: Validate with runtime behavior
@@ -146,13 +164,28 @@ Use `-y` to auto-approve merges (trace wins on conflicts).
 ## How It Works
 
 ```
-  ┌────────────────┐                  ┌─────────────────┐
-  │  Source Code    │                  │  Application    │
-  │  (.c files)    │                  │  Binary         │
-  └───────┬────────┘                  └────────┬────────┘
-          │ CAnalyzer                          │ strace -f
-          │ (regex patterns)                   │
-          ▼                                    ▼
+  ┌─────────────────────┐                  ┌─────────────────┐
+  │  Source Code         │                  │  Application    │
+  │  (.c files / dir)   │                  │  Binary         │
+  └──────────┬──────────┘                  └────────┬────────┘
+             │                                      │
+   ┌─────────▼───────────┐                          │
+   │  Static Analysis    │                  strace -f
+   │  Pipeline           │                          │
+   │                     │                          │
+   │  Preprocessor       │                          │
+   │  (#define resolve)  │                          │
+   │  DataFlowAnalyzer   │                          │
+   │  (variable tracking)│                          │
+   │  IncludeAnalyzer    │                          │
+   │  (header inference) │                          │
+   │  CAnalyzer          │                          │
+   │  (15+ patterns)     │                          │
+   │  ServiceDetector    │                          │
+   │  (.service/.init)   │                          │
+   └──────────┬──────────┘                          │
+              │                                     │
+              ▼                                     ▼
   ┌────────────────┐                  ┌─────────────────┐
   │  Predicted     │                  │  Observed       │
   │  Accesses      │                  │  Accesses       │
@@ -182,6 +215,7 @@ Use `-y` to auto-approve merges (trace wins on conflicts).
             │ Policy Generator │
             │ PolicyModule +   │
             │ FileContexts     │
+            │ + self: rules    │
             └────────┬─────────┘
                      │
         ┌────────────┴───────────────┐
@@ -198,13 +232,17 @@ Use `-y` to auto-approve merges (trace wins on conflicts).
 
 sepgen classifies raw accesses into security intents using deterministic rules:
 
-| Access Pattern | Intent | Custom Type | Macro |
+| Access Pattern | Intent | Custom Type | Macro / Rule |
 |---|---|---|---|
-| `/var/run/*.pid` + write | PID_FILE | `{module}_var_run_t` | `files_pid_filetrans()` |
-| `/etc/**` + read | CONFIG_FILE | `{module}_conf_t` | `read_files_pattern()` |
-| `/var/*/data/**` + write | DATA_DIR | `{module}_data_t` | `manage_files_pattern()` |
-| `/dev/log` + connect | SYSLOG | — | `logging_send_syslog_msg()` |
-| `bind()` | NETWORK_SERVER | — | `corenet_tcp_bind_generic_node()` |
+| `/var/run/*.pid` + write | PID_FILE | `{mod}_var_run_t` | `files_pid_filetrans()` + `manage_files_pattern()` |
+| `/etc/**` + read | CONFIG_FILE | `{mod}_conf_t` | `read_files_pattern()` |
+| `/var/*/data/**` + write | DATA_DIR | `{mod}_data_t` | `manage_files_pattern()` |
+| `syslog()` / `openlog()` | SYSLOG | — | `logging_send_syslog_msg()` |
+| `bind()` on AF_INET | NETWORK_SERVER | — | `corenet_tcp_bind_generic_node()` |
+| `bind()` on PF_UNIX | UNIX_SOCKET_SERVER | — | `allow ... self:unix_stream_socket { ... };` |
+| `setrlimit()` / `cap_*()` | SELF_CAPABILITY | — | `allow ... self:capability ...;` + `self:process ...;` |
+| `daemon()` | DAEMON_PROCESS | — | confirms `init_daemon_domain()` |
+| `.init` file detected | — | `{mod}_initrc_exec_t` | `init_script_file()` |
 
 ## Installation
 
@@ -274,11 +312,11 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** MVP Complete
+**Phase:** MVP Complete — Analyzer improvements in progress
 
-Implemented:
+Implemented (MVP):
 - Core data models (Access, Intent, PolicyModule, FileContexts)
-- Static analysis pipeline (C analyzer with regex-based parsing)
+- Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
 - Intent classification engine with deterministic rules
@@ -288,6 +326,19 @@ Implemented:
 - Merge layer with conflict detection and trace-wins strategy
 - CLI with `analyze` and `trace` commands
 - End-to-end integration tests
+
+In progress (analyzer improvements — targeting 60-80% coverage):
+- `#define` constant resolution (Preprocessor)
+- String variable tracking (DataFlowAnalyzer)
+- Header-based capability inference (IncludeAnalyzer)
+- Service file detection (ServiceDetector)
+- Multi-file directory analysis
+- 15+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon)
+- `self:` allow rules (capability, process, unix_stream_socket)
+- `manage_*_pattern` macros for runtime directories
+- Init script type and `.fc` generation
+- Regex patterns for `.fc` directory entries
+- Syslog deduplication
 
 Future enhancements:
 - Interactive tracing mode with live UI
@@ -299,8 +350,10 @@ Future enhancements:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md)
-- [Implementation Plan](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.2)
+- [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
+- [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
+- [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — baseline efficiency assessment
 
 ## License
 
