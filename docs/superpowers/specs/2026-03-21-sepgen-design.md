@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.3
+**Version:** 1.4
 **Date:** 2026-03-22
-**Status:** Updated — coverage fixes: cross-file dedup, VarRunRule, bind path inference, --exec-path CLI, signal_perms
+**Status:** Updated — auto-detection: MakefileParser, ProjectScanner, symbol mappings from sepolicy, path-prefix classification
 
 ---
 
@@ -243,9 +243,75 @@ class ServiceDetector:
         """Find .service and .init files, extract exec path"""
 ```
 
-Examines the source tree alongside `.c` files to find systemd unit files and init scripts, providing the executable path for `.fc` generation and confirming that `_initrc_exec_t` types are needed.
+Examines the source tree alongside `.c` files (searching the given directory and one level up) to find systemd unit files and init scripts, providing the executable path for `.fc` generation and confirming that `_initrc_exec_t` types are needed.
 
-**Detection patterns** (15+ in CAnalyzer):
+**Sub-component: MakefileParser**
+
+```python
+@dataclass
+class BuildInfo:
+    prog_name: Optional[str] = None     # PROG = mcstransd
+    sbin_dir: str = "/usr/sbin"         # SBINDIR ?= /sbin
+    bin_dir: str = "/usr/bin"           # BINDIR ?= /usr/bin
+    init_script: Optional[str] = None   # INITSCRIPT = mcstrans
+
+    @property
+    def exec_path(self) -> Optional[str]:
+        if self.prog_name:
+            return f"{self.sbin_dir}/{self.prog_name}"
+        return None
+
+class MakefileParser:
+    def parse(self, project_dir: Path) -> BuildInfo:
+        """Find and parse Makefile for install targets."""
+```
+
+Extracts `PROG`, `SBINDIR`/`BINDIR`, `INITSCRIPT` from Makefiles. Provides the installed binary path for `.fc` generation when no `.service` file exists.
+
+**Sub-component: SymbolScanner**
+
+Derived from `sepolicy generate`'s `self.symbols` dict. Maps C function name prefixes to capabilities and process permissions. Scans source code for function calls like `setuid()`, `chown()`, `fork()`, `mount()`, `chroot()`, `mknod()`, `kill()` etc.
+
+```python
+class SymbolScanner:
+    SYMBOL_MAP = {
+        "setuid": ("capability", "setuid"),
+        "setgid": ("capability", "setgid"),
+        "chown": ("capability", "chown"),
+        "chroot": ("capability", "sys_chroot"),
+        "mount": ("capability", "sys_admin"),
+        "mknod": ("capability", "mknod"),
+        "fork": ("process", "fork"),
+        "kill": ("process", "signal_perms"),
+        ...
+    }
+    def scan(self, code: str) -> List[Access]:
+        """Emit Access objects from function name prefix matches."""
+```
+
+**Sub-component: ProjectScanner**
+
+Orchestrates all analyzers and resolves the exec path via a fallback chain:
+
+```python
+@dataclass
+class ProjectInfo:
+    accesses: List[Access]
+    service_info: ServiceInfo
+    build_info: BuildInfo
+    exec_path: Optional[str] = None
+
+class ProjectScanner:
+    def scan(self, source_path: Path, module_name: str) -> ProjectInfo:
+        """Run CAnalyzer + ServiceDetector + MakefileParser, resolve exec_path."""
+```
+
+**Exec path resolution order:**
+1. `.service` file `ExecStart=` (most authoritative)
+2. Makefile `SBINDIR/PROG`
+3. Convention `/usr/sbin/<module_name>` for daemons
+
+**Detection patterns** (15+ in CAnalyzer, ~30+ with SymbolScanner):
 
 | Pattern | Function calls detected | AccessType produced |
 |---------|------------------------|---------------------|
@@ -936,7 +1002,7 @@ sepgen analyze <source-path-or-directory> [--name MODULE_NAME] [--exec-path /usr
 sepgen trace <binary> [--args "ARGS"] [--pid PID] [-v] [-vv] [-y]
 ```
 
-When `<source-path-or-directory>` is a directory, all `.c` files are analyzed recursively and results are aggregated. Service files (`.service`, `.init`) are also detected in the directory tree. The `--exec-path` argument provides the installed binary path for `.fc` entry generation; if omitted, the analyzer tries to infer it from `.service` files.
+When `<source-path-or-directory>` is a directory, all `.c` files are analyzed recursively and results are aggregated. The exec path for `.fc` generation is auto-detected via a fallback chain: `.service` file `ExecStart=` → Makefile `SBINDIR/PROG` → convention `/usr/sbin/<name>`. The `--exec-path` flag is an optional override for cases where auto-detection fails.
 
 **Verbosity levels**:
 

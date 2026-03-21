@@ -24,7 +24,9 @@ sepgen takes a dual-mode approach to policy generation:
 1. **Static analysis** (primary) — Reads your C source code (single file or
    entire directory), resolves `#define` constants, tracks string variables,
    identifies syscall patterns (`fopen`, `open`, `socket`, `bind`, `syslog`,
-   `setrlimit`, `cap_*`, `unlink`, `chmod`, `daemon`), and predicts what the
+   `setrlimit`, `cap_*`, `unlink`, `chmod`, `daemon`), scans for 30+
+   capability/process symbols (adopted from `sepolicy generate`), parses
+   Makefiles and `.service` files for install paths, and predicts what the
    application will access at runtime. No execution needed.
 
 2. **Runtime tracing** (supplementary) — Traces the compiled binary with
@@ -78,8 +80,10 @@ sepgen analyze ./src/ --name myapp -v
 sepgen analyze ./src/myapp.c --name myapp -vv
 ```
 
-When given a directory, sepgen analyzes all `.c` files recursively and also
-detects `.service` and `.init` files for executable paths and initrc types.
+When given a directory, sepgen analyzes all `.c` files recursively, parses
+Makefiles for install targets, detects `.service` and `.init` files, and
+auto-detects the binary's install path for `.fc` generation. No `--exec-path`
+flag needed in the common case.
 
 Example output:
 ```
@@ -181,8 +185,14 @@ Use `-y` to auto-approve merges (trace wins on conflicts).
    │  (header inference) │                          │
    │  CAnalyzer          │                          │
    │  (15+ patterns)     │                          │
+   │  SymbolScanner      │                          │
+   │  (30+ cap/process)  │                          │
+   │  MakefileParser     │                          │
+   │  (exec path, dirs)  │                          │
    │  ServiceDetector    │                          │
    │  (.service/.init)   │                          │
+   │  ProjectScanner     │                          │
+   │  (orchestrator)     │                          │
    └──────────┬──────────┘                          │
               │                                     │
               ▼                                     ▼
@@ -312,9 +322,9 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** MVP Complete — Analyzer improvements in progress
+**Phase:** MVP Complete — Auto-detection improvements in progress
 
-Implemented (MVP):
+Implemented:
 - Core data models (Access, Intent, PolicyModule, FileContexts)
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
@@ -326,19 +336,24 @@ Implemented (MVP):
 - Merge layer with conflict detection and trace-wins strategy
 - CLI with `analyze` and `trace` commands
 - End-to-end integration tests
-
-In progress (analyzer improvements — targeting 60-80% coverage):
 - `#define` constant resolution (Preprocessor)
 - String variable tracking (DataFlowAnalyzer)
 - Header-based capability inference (IncludeAnalyzer)
 - Service file detection (ServiceDetector)
-- Multi-file directory analysis
+- Multi-file directory analysis with cross-file dedup
 - 15+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon)
 - `self:` allow rules (capability, process, unix_stream_socket)
 - `manage_*_pattern` macros for runtime directories
-- Init script type and `.fc` generation
-- Regex patterns for `.fc` directory entries
-- Syslog deduplication
+- Init script type and `.fc` generation with regex patterns
+- VarRunRule, bind path inference, signal_perms from headers
+- 100% statically-detectable coverage on mcstransd reference policy
+
+In progress (auto-detection — eliminating manual flags):
+- MakefileParser for exec path and install targets
+- Broader ServiceDetector search scope
+- ProjectScanner orchestrator (unified scan pipeline)
+- Symbol-to-permission mappings from sepolicy (30+ additional patterns)
+- Path-prefix routing for intent classification
 
 Future enhancements:
 - Interactive tracing mode with live UI
@@ -347,13 +362,16 @@ Future enhancements:
 - Tree-sitter AST parsing (replacing regex)
 - `.if` interface file generation
 - Refine command (update policy from audit log)
+- Policy archetypes (daemon vs user app vs inetd vs dbus)
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.2)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.4)
 - [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
 - [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
-- [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — baseline efficiency assessment
+- [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
+- [Implementation Plan — Auto-Detection](docs/superpowers/plans/2026-03-22-auto-detection.md)
+- [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment (100% reachable coverage)
 
 ## License
 
