@@ -1,0 +1,29 @@
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sepgen.models.access import Access
+
+class IntentType(Enum):
+    """Classified intent categories"""
+    CONFIG_FILE = "config_file"
+    PID_FILE = "pid_file"
+    DATA_DIR = "data_dir"
+    LOG_FILE = "log_file"
+    TEMP_FILE = "temp_file"
+    NETWORK_SERVER = "network_server"
+    NETWORK_CLIENT = "network_client"
+    SYSLOG = "syslog"
+    TERMINAL_IO = "terminal_io"
+    SHARED_LIBRARY = "shared_library"
+    UNKNOWN = "unknown"
+
+@dataclass
+class Intent:
+    """Classified security intent with associated accesses"""
+    intent_type: IntentType
+    accesses: List['Access']
+    confidence: float = 1.0
+    selinux_type: Optional[str] = None
+    macros: List[str] = field(default_factory=list)
