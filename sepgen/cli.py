@@ -81,10 +81,10 @@ def run_analyze(args) -> int:
     print(f"[3/3] Generating policy... ", end='', flush=True)
 
     te_gen = TEGenerator(module_name)
-    policy = te_gen.generate(intents, service_info=project.service_info)
+    policy = te_gen.generate(intents, service_info=project.service_info, build_info=project.build_info)
 
     fc_gen = FCGenerator(module_name, exec_path=exec_path)
-    contexts = fc_gen.generate(intents, service_info=project.service_info)
+    contexts = fc_gen.generate(intents, service_info=project.service_info, build_info=project.build_info)
 
     te_writer = TEWriter()
     fc_writer = FCWriter()

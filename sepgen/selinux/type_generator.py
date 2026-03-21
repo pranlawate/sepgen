@@ -13,6 +13,7 @@ class TypeGenerator:
             IntentType.DATA_DIR: f"{module_name}_data_t",
             IntentType.LOG_FILE: f"{module_name}_log_t",
             IntentType.TEMP_FILE: f"{module_name}_tmp_t",
+            IntentType.NETWORK_SERVER: f"{module_name}_port_t",
         }
 
         return type_map.get(intent.intent_type)

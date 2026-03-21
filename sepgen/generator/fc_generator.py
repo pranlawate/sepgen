@@ -11,7 +11,7 @@ class FCGenerator:
         self.module_name = module_name
         self.exec_path = exec_path
 
-    def generate(self, intents: List[Intent], service_info=None) -> FileContexts:
+    def generate(self, intents: List[Intent], service_info=None, build_info=None) -> FileContexts:
         """Generate FileContexts from intents, paths, and service info."""
         contexts = FileContexts()
 
@@ -21,6 +21,11 @@ class FCGenerator:
         if service_info and getattr(service_info, 'has_init_script', False):
             contexts.add_entry(
                 f"/etc/rc.d/init.d/{self.module_name}",
+                f"{self.module_name}_initrc_exec_t"
+            )
+        elif build_info and getattr(build_info, 'init_script', None):
+            contexts.add_entry(
+                f"/etc/rc.d/init.d/{build_info.init_script}",
                 f"{self.module_name}_initrc_exec_t"
             )
 
@@ -37,6 +42,10 @@ class FCGenerator:
                 if fc_path not in seen_paths:
                     seen_paths.add(fc_path)
                     contexts.add_entry(fc_path, intent.selinux_type)
+                    run_alias = self._run_alias(fc_path)
+                    if run_alias and run_alias not in seen_paths:
+                        seen_paths.add(run_alias)
+                        contexts.add_entry(run_alias, intent.selinux_type)
 
         return contexts
 
@@ -51,4 +60,18 @@ class FCGenerator:
                         return str(Path(*parts[:i + 2])) + "(/.*)?"
                     elif i + 2 < len(parts):
                         return str(Path(*parts[:i + 3])) + "(/.*)?"
+
+        if "_data_t" in selinux_type:
+            parent = str(Path(path).parent)
+            if parent != "/":
+                return parent + "(/.*)?"
+
         return path
+
+    def _run_alias(self, fc_path: str) -> str | None:
+        """Emit /run/ alias for /var/run/ paths and vice versa."""
+        if fc_path.startswith("/var/run/"):
+            return "/run/" + fc_path[len("/var/run/"):]
+        if fc_path.startswith("/run/") and not fc_path.startswith("/run/"):
+            return "/var/run/" + fc_path[len("/run/"):]
+        return None

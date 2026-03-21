@@ -13,7 +13,13 @@ class CAnalyzer(BaseAnalyzer):
     SYSLOG_PATTERN = re.compile(r'\b(syslog|openlog|vsyslog)\s*\(')
     LISTEN_PATTERN = re.compile(r'\blisten\s*\(')
     ACCEPT_PATTERN = re.compile(r'\baccept\s*\(')
-    SOCKET_PATTERN = re.compile(r'\bsocket\s*\(\s*(PF_UNIX|PF_INET|AF_UNIX|AF_INET|PF_INET6|AF_INET6)')
+    SOCKET_PATTERN = re.compile(
+        r'\bsocket\s*\(\s*(PF_UNIX|PF_INET|AF_UNIX|AF_INET|PF_INET6|AF_INET6|AF_NETLINK|PF_NETLINK)'
+        r'\s*,\s*(SOCK_STREAM|SOCK_DGRAM|SOCK_RAW|SOCK_SEQPACKET)'
+    )
+    SOCKET_PATTERN_SIMPLE = re.compile(
+        r'\bsocket\s*\(\s*(PF_UNIX|PF_INET|AF_UNIX|AF_INET|PF_INET6|AF_INET6|AF_NETLINK|PF_NETLINK)'
+    )
     BIND_PATTERN = re.compile(r'\bbind\s*\(')
     SETRLIMIT_PATTERN = re.compile(r'\bsetrlimit\s*\(')
     CAP_PATTERN = re.compile(r'\b(cap_init|cap_set_proc|cap_get_proc|cap_set_flag)\s*\(')
@@ -96,16 +102,51 @@ class CAnalyzer(BaseAnalyzer):
     def _detect_socket(self, code: str) -> List[Access]:
         accesses = []
         self._last_socket_domain = None
+        self._last_socket_type = "SOCK_STREAM"
+
         for match in self.SOCKET_PATTERN.finditer(code):
             domain = match.group(1)
+            sock_type = match.group(2)
             self._last_socket_domain = domain
-            accesses.append(Access(
-                access_type=AccessType.SOCKET_CREATE,
-                path=f"{domain}:SOCK_STREAM",
-                syscall="socket",
-                details={"domain": domain},
-                source_line=code[:match.start()].count('\n') + 1
-            ))
+            self._last_socket_type = sock_type
+
+            if domain in ("AF_NETLINK", "PF_NETLINK"):
+                accesses.append(Access(
+                    access_type=AccessType.NETLINK_SOCKET,
+                    path="",
+                    syscall="socket",
+                    details={"domain": domain, "sock_type": sock_type},
+                    source_line=code[:match.start()].count('\n') + 1,
+                ))
+            else:
+                accesses.append(Access(
+                    access_type=AccessType.SOCKET_CREATE,
+                    path=f"{domain}:{sock_type}",
+                    syscall="socket",
+                    details={"domain": domain, "sock_type": sock_type},
+                    source_line=code[:match.start()].count('\n') + 1,
+                ))
+
+        if not accesses:
+            for match in self.SOCKET_PATTERN_SIMPLE.finditer(code):
+                domain = match.group(1)
+                self._last_socket_domain = domain
+                if domain in ("AF_NETLINK", "PF_NETLINK"):
+                    accesses.append(Access(
+                        access_type=AccessType.NETLINK_SOCKET,
+                        path="",
+                        syscall="socket",
+                        details={"domain": domain},
+                        source_line=code[:match.start()].count('\n') + 1,
+                    ))
+                else:
+                    accesses.append(Access(
+                        access_type=AccessType.SOCKET_CREATE,
+                        path=f"{domain}:SOCK_STREAM",
+                        syscall="socket",
+                        details={"domain": domain},
+                        source_line=code[:match.start()].count('\n') + 1,
+                    ))
         return accesses
 
     def _detect_bind(self, code: str) -> List[Access]:

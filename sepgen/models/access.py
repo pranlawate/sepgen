@@ -22,6 +22,9 @@ class AccessType(Enum):
     PROCESS_CONTROL = "process_control"
     CAPABILITY = "capability"
     DAEMON = "daemon"
+    PROCESS_EXEC = "process_exec"
+    NETLINK_SOCKET = "netlink_socket"
+    SELINUX_API = "selinux_api"
 
 @dataclass
 class Access:

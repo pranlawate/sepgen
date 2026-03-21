@@ -47,11 +47,35 @@ SYMBOL_MAP: Dict[str, Tuple[AccessType, Dict]] = {
     # Network raw
     "raw": (AccessType.CAPABILITY, {"capability": "net_raw"}),
     "rawsocket": (AccessType.CAPABILITY, {"capability": "net_raw"}),
+    # Process execution
+    "execl": (AccessType.PROCESS_EXEC, {}),
+    "execlp": (AccessType.PROCESS_EXEC, {}),
+    "execle": (AccessType.PROCESS_EXEC, {}),
+    "execv": (AccessType.PROCESS_EXEC, {}),
+    "execvp": (AccessType.PROCESS_EXEC, {}),
+    "execve": (AccessType.PROCESS_EXEC, {}),
+    "execvpe": (AccessType.PROCESS_EXEC, {}),
+    "system": (AccessType.PROCESS_EXEC, {}),
+    "popen": (AccessType.PROCESS_EXEC, {}),
+    # SELinux API
+    "getcon": (AccessType.SELINUX_API, {"api": "getcon"}),
+    "getcon_raw": (AccessType.SELINUX_API, {"api": "getcon"}),
+    "setcon": (AccessType.SELINUX_API, {"api": "setcon"}),
+    "getpidcon": (AccessType.SELINUX_API, {"api": "getpidcon"}),
+    "security_compute_av": (AccessType.SELINUX_API, {"api": "compute_av"}),
+    "security_compute_av_flags": (AccessType.SELINUX_API, {"api": "compute_av"}),
+    "avc_has_perm": (AccessType.SELINUX_API, {"api": "avc"}),
+    "selabel_open": (AccessType.SELINUX_API, {"api": "selabel"}),
+    "selinux_check_access": (AccessType.SELINUX_API, {"api": "check_access"}),
 }
 
 _FUNC_PATTERN = re.compile(
     r'\b(' + '|'.join(re.escape(s) for s in SYMBOL_MAP) + r')\s*\('
 )
+
+
+_SELINUX_INCLUDE = re.compile(r'#include\s+<selinux/selinux\.h>')
+_NETLINK_INCLUDE = re.compile(r'#include\s+<linux/netlink\.h>')
 
 
 class SymbolScanner:
@@ -73,6 +97,17 @@ class SymbolScanner:
                 details=dict(details),
                 source_line=code[:match.start()].count('\n') + 1,
             ))
+
+        if _SELINUX_INCLUDE.search(code) and not any(
+            a.access_type == AccessType.SELINUX_API for a in accesses
+        ):
+            accesses.append(Access(
+                access_type=AccessType.SELINUX_API,
+                path="",
+                syscall="selinux_header",
+                details={"api": "header"},
+            ))
+
         return accesses
 
     def scan_file(self, file_path: Path) -> List[Access]:

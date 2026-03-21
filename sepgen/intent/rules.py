@@ -187,14 +187,86 @@ class NetworkServerRule(ClassificationRule):
         return IntentType.NETWORK_SERVER
 
 
+class ExecBinaryRule(ClassificationRule):
+    """Classify exec/system/popen calls."""
+
+    def matches(self, access: Access) -> bool:
+        return access.access_type == AccessType.PROCESS_EXEC
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.EXEC_BINARY
+
+
+class KernelStateRule(ClassificationRule):
+    """Classify /proc/* reads as kernel state access."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.FILE_READ, AccessType.FILE_WRITE):
+            return False
+        return access.path.startswith("/proc/")
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.KERNEL_STATE
+
+
+class SysfsRule(ClassificationRule):
+    """Classify /sys/* reads as sysfs access."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.FILE_READ, AccessType.FILE_WRITE):
+            return False
+        return access.path.startswith("/sys/")
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.SYSFS_READ
+
+
+class SELinuxApiRule(ClassificationRule):
+    """Classify SELinux API calls."""
+
+    def matches(self, access: Access) -> bool:
+        return access.access_type == AccessType.SELINUX_API
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.SELINUX_API
+
+
+class NetlinkSocketRule(ClassificationRule):
+    """Classify netlink socket creation."""
+
+    def matches(self, access: Access) -> bool:
+        return access.access_type == AccessType.NETLINK_SOCKET
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.NETLINK_SOCKET
+
+
+class ConfigDataRule(ClassificationRule):
+    """Classify write paths extracted from config files as DATA_DIR."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type != AccessType.FILE_WRITE:
+            return False
+        return access.details.get("source") == "config_file"
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.DATA_DIR
+
+
 DEFAULT_RULES = [
     VarRunRule(),
     PathPrefixRule(),
     PidFileRule(),
+    KernelStateRule(),
+    SysfsRule(),
     ConfigFileRule(),
     SyslogRule(),
     DaemonProcessRule(),
+    ExecBinaryRule(),
     SelfCapabilityRule(),
+    SELinuxApiRule(),
+    NetlinkSocketRule(),
     UnixSocketRule(),
     NetworkServerRule(),
+    ConfigDataRule(),
 ]

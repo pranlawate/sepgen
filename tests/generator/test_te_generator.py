@@ -92,8 +92,7 @@ def test_generate_self_unix_socket_rules():
     socket_rules = [r for r in policy.allow_rules
                     if r.target == "self" and r.object_class == "unix_stream_socket"]
     assert len(socket_rules) == 1
-    assert "create" in socket_rules[0].permissions
-    assert "bind" in socket_rules[0].permissions
+    assert "create_stream_socket_perms" in socket_rules[0].permissions
 
 
 def test_generate_var_run_with_unix_socket():

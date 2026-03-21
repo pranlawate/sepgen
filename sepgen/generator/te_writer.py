@@ -11,6 +11,10 @@ class TEWriter:
         lines.append(f"policy_module({policy.name}, {policy.version})")
         lines.append("")
 
+        if policy.require:
+            lines.append(str(policy.require))
+            lines.append("")
+
         lines.append("########################################")
         lines.append("# Declarations")
         lines.append("########################################")
@@ -18,6 +22,9 @@ class TEWriter:
 
         for type_decl in policy.types:
             lines.append(str(type_decl))
+
+        for ta in policy.typeattributes:
+            lines.append(str(ta))
 
         lines.append("")
 

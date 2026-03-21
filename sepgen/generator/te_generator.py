@@ -1,7 +1,7 @@
 from typing import List
 from sepgen.models.access import AccessType
 from sepgen.models.intent import Intent, IntentType
-from sepgen.models.policy import AllowRule, PolicyModule
+from sepgen.models.policy import AllowRule, PolicyModule, RequireBlock, TypeAttribute
 from sepgen.selinux.type_generator import TypeGenerator
 from sepgen.selinux.macro_lookup import MacroLookup
 
@@ -15,7 +15,7 @@ class TEGenerator:
         self.type_generator = TypeGenerator()
         self.macro_lookup = MacroLookup()
 
-    def generate(self, intents: List[Intent], service_info=None) -> PolicyModule:
+    def generate(self, intents: List[Intent], service_info=None, build_info=None) -> PolicyModule:
         """Generate PolicyModule from classified intents and optional ServiceInfo."""
         policy = PolicyModule(name=self.module_name, version=self.version)
 
@@ -28,11 +28,22 @@ class TEGenerator:
         ])
 
         has_unix_socket = False
+        has_unix_dgram = False
+        has_network_server = False
+        has_netlink = False
         var_run_type = None
+        port_type = None
 
         for intent in intents:
             if intent.intent_type == IntentType.UNIX_SOCKET_SERVER:
                 has_unix_socket = True
+                for access in intent.accesses:
+                    if access.details.get("sock_type") == "SOCK_DGRAM":
+                        has_unix_dgram = True
+            elif intent.intent_type == IntentType.NETWORK_SERVER:
+                has_network_server = True
+            elif intent.intent_type == IntentType.NETLINK_SOCKET:
+                has_netlink = True
 
             custom_type = self.type_generator.generate_type_name(
                 self.module_name, intent
@@ -79,7 +90,9 @@ class TEGenerator:
                         f"{self.module_name}_t", custom_type, custom_type
                     ])
                 elif intent.intent_type == IntentType.CONFIG_FILE:
-                    policy.add_macro("files_type", [custom_type])
+                    policy.add_macro("files_config_file", [custom_type])
+                elif intent.intent_type == IntentType.NETWORK_SERVER:
+                    port_type = custom_type
 
             macro = self.macro_lookup.suggest_macro(intent)
             if macro:
@@ -91,6 +104,19 @@ class TEGenerator:
                     ])
                 else:
                     policy.add_macro(macro, [f"{self.module_name}_t"])
+
+            if intent.intent_type == IntentType.EXEC_BINARY:
+                policy.add_macro("can_exec", [
+                    f"{self.module_name}_t", f"{self.module_name}_exec_t"
+                ])
+                policy.add_macro("corecmd_search_bin", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.KERNEL_STATE:
+                policy.add_macro("kernel_read_system_state", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.SYSFS_READ:
+                policy.add_macro("dev_read_sysfs", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.SELINUX_API:
+                policy.add_macro("selinux_compute_access_vector", [f"{self.module_name}_t"])
+                policy.add_macro("seutil_read_config", [f"{self.module_name}_t"])
 
         if has_unix_socket and var_run_type:
             policy.add_macro("manage_sock_files_pattern", [
@@ -135,10 +161,48 @@ class TEGenerator:
                 source=f"{self.module_name}_t",
                 target="self",
                 object_class="unix_stream_socket",
-                permissions=["create", "bind", "listen", "accept"]
+                permissions=["create_stream_socket_perms"]
+            ))
+        if has_unix_dgram or has_unix_socket:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="unix_dgram_socket",
+                permissions=["create_socket_perms"]
+            ))
+        if has_netlink:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="netlink_selinux_socket",
+                permissions=["create_socket_perms"]
             ))
 
-        if service_info and getattr(service_info, 'needs_initrc_exec_t', False):
+        if has_network_server:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="tcp_socket",
+                permissions=["create_stream_socket_perms"]
+            ))
+            policy.add_macro("corenet_tcp_sendrecv_generic_node", [f"{self.module_name}_t"])
+            if port_type:
+                if not policy.require:
+                    policy.require = RequireBlock()
+                policy.require.attributes.append("port_type")
+                policy.typeattributes.append(TypeAttribute(port_type, "port_type"))
+                policy.allow_rules.append(AllowRule(
+                    source=f"{self.module_name}_t",
+                    target=port_type,
+                    object_class="tcp_socket",
+                    permissions=["name_bind"]
+                ))
+
+        needs_initrc = (
+            (service_info and getattr(service_info, 'needs_initrc_exec_t', False))
+            or (build_info and getattr(build_info, 'init_script', None))
+        )
+        if needs_initrc:
             initrc_type = f"{self.module_name}_initrc_exec_t"
             policy.add_type(initrc_type)
             policy.add_macro("init_script_file", [initrc_type])
