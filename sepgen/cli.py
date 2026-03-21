@@ -60,7 +60,10 @@ def run_analyze(args) -> int:
 
     print(f"[1/3] Analyzing source... ", end='', flush=True)
     analyzer = CAnalyzer()
-    accesses = analyzer.analyze_file(source_path)
+    if source_path.is_dir():
+        accesses = analyzer.analyze_directory(source_path)
+    else:
+        accesses = analyzer.analyze_file(source_path)
     print(f"✓")
 
     print(f"[2/3] Classifying intents... ", end='', flush=True)

@@ -41,3 +41,30 @@ def test_generate_multiple_contexts():
     ]
     contexts = generator.generate(intents)
     assert len(contexts.entries) >= 3
+
+
+def test_var_run_generates_regex_pattern():
+    generator = FCGenerator(module_name="setrans")
+    intents = [
+        Intent(intent_type=IntentType.PID_FILE,
+               accesses=[Access(AccessType.FILE_WRITE,
+                                "/var/run/setrans/.setrans-unix", "bind")],
+               selinux_type="setrans_var_run_t"),
+    ]
+    contexts = generator.generate(intents)
+
+    paths = [e.path for e in contexts.entries]
+    assert any("/run/setrans(/.*)?" in p for p in paths)
+
+
+def test_config_file_keeps_literal_path():
+    generator = FCGenerator(module_name="myapp")
+    intents = [
+        Intent(intent_type=IntentType.CONFIG_FILE,
+               accesses=[Access(AccessType.FILE_READ, "/etc/myapp.conf", "open")],
+               selinux_type="myapp_conf_t"),
+    ]
+    contexts = generator.generate(intents)
+
+    paths = [e.path for e in contexts.entries]
+    assert "/etc/myapp.conf" in paths

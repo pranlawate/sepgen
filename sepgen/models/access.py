@@ -15,8 +15,13 @@ class AccessType(Enum):
     SOCKET_LISTEN = "socket_listen"
     SOCKET_CONNECT = "socket_connect"
     SOCKET_ACCEPT = "socket_accept"
+    FILE_SETATTR = "file_setattr"
     IPC_SYSV = "ipc_sysv"
     IPC_POSIX = "ipc_posix"
+    SYSLOG = "syslog"
+    PROCESS_CONTROL = "process_control"
+    CAPABILITY = "capability"
+    DAEMON = "daemon"
 
 @dataclass
 class Access:

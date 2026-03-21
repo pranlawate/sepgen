@@ -60,6 +60,8 @@ class SyslogRule(ClassificationRule):
     """Classify syslog access"""
 
     def matches(self, access: Access) -> bool:
+        if access.access_type == AccessType.SYSLOG:
+            return True
         return (access.path == "/dev/log" and
                 access.details.get("is_syslog", False))
 
@@ -67,11 +69,48 @@ class SyslogRule(ClassificationRule):
         return IntentType.SYSLOG
 
 
-class NetworkServerRule(ClassificationRule):
-    """Classify network server operations"""
+class DaemonProcessRule(ClassificationRule):
+    """Classify daemon() calls — confirms init_daemon_domain is correct"""
 
     def matches(self, access: Access) -> bool:
-        return access.access_type == AccessType.SOCKET_BIND
+        return access.access_type == AccessType.DAEMON
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.DAEMON_PROCESS
+
+
+class SelfCapabilityRule(ClassificationRule):
+    """Classify capability and process control operations"""
+
+    def matches(self, access: Access) -> bool:
+        return access.access_type in [AccessType.PROCESS_CONTROL, AccessType.CAPABILITY]
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.SELF_CAPABILITY
+
+
+class UnixSocketRule(ClassificationRule):
+    """Classify Unix domain socket server operations"""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type != AccessType.SOCKET_BIND:
+            return False
+        return access.details.get("domain") in ["AF_UNIX", "PF_UNIX"]
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.UNIX_SOCKET_SERVER
+
+
+class NetworkServerRule(ClassificationRule):
+    """Classify TCP/UDP network server operations"""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type != AccessType.SOCKET_BIND:
+            return False
+        domain = access.details.get("domain")
+        if domain:
+            return domain in ["AF_INET", "PF_INET", "AF_INET6", "PF_INET6"]
+        return True
 
     def get_intent_type(self) -> IntentType:
         return IntentType.NETWORK_SERVER
@@ -81,5 +120,8 @@ DEFAULT_RULES = [
     PidFileRule(),
     ConfigFileRule(),
     SyslogRule(),
+    DaemonProcessRule(),
+    SelfCapabilityRule(),
+    UnixSocketRule(),
     NetworkServerRule(),
 ]
