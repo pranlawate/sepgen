@@ -362,7 +362,7 @@ Implemented:
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 19 deterministic rules
+- Intent classification engine with 18 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -395,7 +395,7 @@ Implemented:
 - /var/run + /run dual alias in .fc generation
 - VarRunRule, PathPrefixRule, bind path inference, signal_perms
 - MakefileParser, ProjectScanner, SymbolScanner
-- Validated against testprog, testprog-net, mcstransd, chronyd, and dbus reference policies
+- Validated against 7 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, and libvirt
 
 Future enhancements:
 - Interactive tracing mode with live UI
