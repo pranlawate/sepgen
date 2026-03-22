@@ -28,6 +28,15 @@ def create_parser() -> argparse.ArgumentParser:
     trace_parser.add_argument('-v', '--verbose', action='count', default=0,
                               help='Increase verbosity (-v for verbose, -vv for debug)')
 
+    refine_parser = subparsers.add_parser('refine', help='Refine policy from AVC denials')
+    refine_parser.add_argument('--name', required=True, help='Policy module name')
+    refine_parser.add_argument('--audit-log', default='/var/log/audit/audit.log',
+                               help='Path to audit log (default: /var/log/audit/audit.log)')
+    refine_parser.add_argument('--auto', action='store_true',
+                               help='Auto-apply suggestions to .te file')
+    refine_parser.add_argument('-v', '--verbose', action='count', default=0,
+                               help='Increase verbosity')
+
     return parser
 
 
@@ -43,6 +52,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return run_analyze(args)
     elif args.command == 'trace':
         return run_trace(args)
+    elif args.command == 'refine':
+        return run_refine(args)
 
     return 0
 
@@ -239,5 +250,74 @@ def run_trace(args) -> int:
         fc_writer.write(new_contexts, fc_path)
 
     print(f"\nGenerated: {te_path} ({len(final_policy.types)} types), {fc_path}")
+
+    return 0
+
+
+def run_refine(args) -> int:
+    """Execute refine command — read AVC denials and suggest policy additions."""
+    from sepgen.refiner.denial_reader import DenialReader
+    from sepgen.refiner.macro_suggester import MacroSuggester
+
+    module_name = args.name
+    module_type = f"{module_name}_t"
+    audit_log = Path(args.audit_log)
+    te_path = Path(f"{module_name}.te")
+
+    if not audit_log.exists():
+        print(f"Error: Audit log not found: {audit_log}")
+        return 1
+
+    print(f"[1/3] Reading AVC denials for {module_type}... ", end='', flush=True)
+
+    reader = DenialReader()
+    denials = reader.read_audit_log(audit_log, module_type)
+
+    print(f"✓ ({len(denials)} denials)")
+
+    if not denials:
+        print(f"\nNo denials found for {module_type}. Policy is complete!")
+        return 0
+
+    if args.verbose >= 1:
+        for d in denials:
+            print(f"  • {d}")
+
+    print(f"[2/3] Suggesting macros... ", end='', flush=True)
+
+    suggester = MacroSuggester()
+    suggestions = suggester.suggest(denials)
+
+    print(f"✓ ({len(suggestions)} suggestions)")
+
+    print(f"\nSuggested additions for {module_name}.te:")
+    for s in suggestions:
+        print(f"  + {s}")
+
+    if args.auto and te_path.exists():
+        print(f"\n[3/3] Updating {te_path}... ", end='', flush=True)
+
+        content = te_path.read_text()
+        additions = []
+        for s in suggestions:
+            line = str(s)
+            if line not in content:
+                additions.append(line)
+
+        if additions:
+            insert_point = content.rindex("########################################")
+            policy_section = content[insert_point:]
+            new_content = content[:insert_point] + policy_section.rstrip() + "\n"
+            for line in additions:
+                new_content += line + "\n"
+
+            te_path.write_text(new_content)
+            print(f"✓ ({len(additions)} rules added)")
+        else:
+            print("✓ (no new rules needed)")
+    elif args.auto:
+        print(f"\nWarning: {te_path} not found. Run analyze/trace first.")
+    else:
+        print(f"\nTo apply: sepgen refine --name {module_name} --auto")
 
     return 0
