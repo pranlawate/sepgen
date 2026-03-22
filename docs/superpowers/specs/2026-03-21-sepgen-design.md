@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.6
+**Version:** 1.7
 **Date:** 2026-03-22
-**Status:** Updated — general improvements: capability details in self:capability, UDP network server support, systemd directory directives, directive-path config parsing, SELinux API false-positive fix
+**Status:** Updated — Tier A gaps: CAP_* macro detection, cap_from_text parsing, kill() capability, wrapper socket detection, /dev/urandom rule, CapabilityBoundingSet parsing, .conf.in template scanning
 
 ---
 
@@ -335,8 +335,14 @@ class ProjectScanner:
 | Capabilities | `cap_init()`, `cap_set_proc()`, `cap_get_proc()` | `CAPABILITY` |
 | Daemonize | `daemon()` | `DAEMON` |
 | Process exec | `execl`, `execv`, `system`, `popen` (via SymbolScanner) | `PROCESS_EXEC` |
-| SELinux API | `getcon`, `setcon`, `security_compute_av`, `#include <selinux/selinux.h>` | `SELINUX_API` |
-| Config file parse | `KEY=VALUE` files → absolute paths extracted | `FILE_WRITE` (source=config_file) |
+| SELinux API | `getcon`, `setcon`, `security_compute_av` (real calls only) | `SELINUX_API` |
+| CAP_* macros | `CAP_SYS_TIME`, `CAP_NET_ADMIN`, `CAP_KILL`, etc. | `CAPABILITY` |
+| cap_from_text | `"cap_sys_time=ep"` string literals | `CAPABILITY` |
+| kill() | `kill()` function call (via SymbolScanner) | `CAPABILITY` (kill) |
+| Wrapper sockets | Any function call with literal `AF_UNIX`, `SOCK_STREAM` args | `SOCKET_CREATE` |
+| /dev/urandom | `open("/dev/urandom")` or `#define DEV_URANDOM` | `FILE_READ` → `DEV_RANDOM` |
+| CapabilityBoundingSet | systemd `.service` directive | `CAPABILITY` |
+| Config file parse | `KEY=VALUE`, `directive /path`, XML `>/etc/path<` formats | `FILE_WRITE` (source=config_file) |
 
 **Deduplication**: Some patterns (notably syslog) may match dozens of times in a single file. The analyzer deduplicates by emitting only one Access per distinct function name. One `logging_send_syslog_msg()` macro is sufficient regardless of how many `syslog()` calls exist. Cross-file deduplication is performed in `analyze_directory` after aggregating per-file results — duplicate SYSLOG accesses for the same function name are collapsed.
 
@@ -459,6 +465,7 @@ class IntentType(Enum):
     SYSFS_READ = "sysfs_read"              # /sys/* reads → dev_read_sysfs
     SELINUX_API = "selinux_api"            # getcon/setcon → seutil_read_config
     NETLINK_SOCKET = "netlink_socket"      # AF_NETLINK → netlink_*_socket
+    DEV_RANDOM = "dev_random"              # /dev/urandom → dev_read_urand
     TERMINAL_IO = "terminal_io"
     SHARED_LIBRARY = "shared_library"
     UNKNOWN = "unknown"

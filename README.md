@@ -343,7 +343,7 @@ Implemented:
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 16 deterministic rules
+- Intent classification engine with 17 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -357,9 +357,14 @@ Implemented:
 - Systemd directory directives (StateDirectory, RuntimeDirectory, LogsDirectory, ReadWritePaths)
 - Config file parsing for data paths (KEY=VALUE and directive /path formats)
 - Multi-file directory analysis with cross-file dedup
-- 20+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon, exec*, /proc, /sys, netlink)
-- 40+ symbol-to-permission mappings (from sepolicy generate)
+- 25+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon, exec*, /proc, /sys, netlink, CAP_* macros, cap_from_text, kill, wrapper sockets, /dev/urandom)
+- 40+ symbol-to-permission mappings (from sepolicy generate) plus kill()
 - SELinux API detection (getcon, setcon, security_compute_av — real calls only, no header false positives)
+- CAP_* macro detection (CAP_SYS_TIME, CAP_NET_ADMIN, etc.) and cap_from_text() string parsing
+- CapabilityBoundingSet/AmbientCapabilities from systemd .service files
+- /dev/urandom and /dev/random -> dev_read_urand() macro
+- Wrapper function socket detection (catches indirect socket creation via helper functions)
+- Template config file scanning (.conf.in with XML path extraction)
 - UDP and TCP socket protocol awareness (separate corenet_udp_* and corenet_tcp_* macros)
 - Socket type propagation (SOCK_DGRAM vs SOCK_STREAM through socket→bind chain)
 - `self:` allow rules (capability with specific caps from setuid/setgid/chown/etc., process, unix_stream_socket, tcp_socket, udp_socket, unix_dgram_socket, netlink)
@@ -382,13 +387,14 @@ Future enhancements:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.6)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.7)
 - [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
 - [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
 - [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
 - [Implementation Plan — Auto-Detection](docs/superpowers/plans/2026-03-22-auto-detection.md)
 - [Implementation Plan — Max Static Analysis](docs/superpowers/plans/2026-03-22-max-static-analysis.md)
 - [Implementation Plan — General Improvements](docs/superpowers/plans/2026-03-22-general-improvements.md)
+- [Implementation Plan — Tier A Gaps](docs/superpowers/plans/2026-03-22-tier-a-gaps.md)
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
