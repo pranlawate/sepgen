@@ -64,6 +64,9 @@ The tool bridges the gap between `audit2allow` (generates raw allow rules) and h
     │ ├───────────────────┤ │           │
     │ │ ServiceDetector   │ │           │
     │ │ (.service/.init)  │ │           │
+    │ ├───────────────────┤ │           │
+    │ │ ConfigParser      │ │           │
+    │ │ (.conf data paths)│ │           │
     │ └───────────────────┘ │           │
     └────────┬──────────────┘           │
              │                          │
@@ -123,7 +126,8 @@ The tool bridges the gap between `audit2allow` (generates raw allow rules) and h
 - `Preprocessor`: Resolves `#define` string constants before pattern matching
 - `IncludeAnalyzer`: Infers capabilities from `#include` headers
 - `DataFlowAnalyzer`: Tracks string variable assignments to resolve indirect paths
-- `ServiceDetector`: Finds `.service` and `.init` files for exec paths and initrc types
+- `ServiceDetector`: Finds `.service` and `.init` files for exec paths, initrc types, config/PID paths from ExecStart args
+- `ConfigParser`: Parses `KEY=VALUE` config files to extract absolute data paths
 
 **Design**:
 
@@ -237,13 +241,15 @@ class ServiceInfo:
     has_init_script: bool = False
     exec_path: Optional[str] = None
     needs_initrc_exec_t: bool = False
+    config_paths: List[str]   # absolute paths from ExecStart args (*.conf etc.)
+    pid_paths: List[str]      # absolute paths from ExecStart args (/var/run/*, *.pid)
 
 class ServiceDetector:
     def detect_service_files(self, project_dir: Path) -> ServiceInfo:
-        """Find .service and .init files, extract exec path"""
+        """Find .service and .init files, extract exec path and ExecStart args"""
 ```
 
-Examines the source tree alongside `.c` files (searching the given directory and one level up) to find systemd unit files and init scripts, providing the executable path for `.fc` generation and confirming that `_initrc_exec_t` types are needed.
+Examines the source tree alongside `.c` files (searching the given directory and one level up) to find systemd unit files and init scripts, providing the executable path for `.fc` generation, config/PID paths from ExecStart arguments, and confirming that `_initrc_exec_t` types are needed.
 
 **Sub-component: MakefileParser**
 
@@ -303,7 +309,8 @@ class ProjectInfo:
 
 class ProjectScanner:
     def scan(self, source_path: Path, module_name: str) -> ProjectInfo:
-        """Run CAnalyzer + ServiceDetector + MakefileParser, resolve exec_path."""
+        """Run CAnalyzer + SymbolScanner + ServiceDetector + MakefileParser +
+        ConfigParser, inject service/config paths, resolve exec_path."""
 ```
 
 **Exec path resolution order:**
@@ -311,13 +318,13 @@ class ProjectScanner:
 2. Makefile `SBINDIR/PROG`
 3. Convention `/usr/sbin/<module_name>` for daemons
 
-**Detection patterns** (15+ in CAnalyzer, ~30+ with SymbolScanner):
+**Detection patterns** (20+ in CAnalyzer, 40+ with SymbolScanner):
 
 | Pattern | Function calls detected | AccessType produced |
 |---------|------------------------|---------------------|
 | File open (fopen) | `fopen()` (literal + variable paths) | `FILE_READ`, `FILE_WRITE` |
 | File open (open) | `open()` with O_RDONLY/O_WRONLY/O_CREAT flags | `FILE_READ`, `FILE_WRITE`, `FILE_CREATE` |
-| Socket create | `socket(PF_UNIX\|AF_INET\|...)` | `SOCKET_CREATE` (with domain in details) |
+| Socket create | `socket(PF_UNIX\|AF_INET\|AF_NETLINK\|...)` + SOCK_STREAM/DGRAM | `SOCKET_CREATE`, `NETLINK_SOCKET` |
 | Socket bind | `bind()` (propagates domain from socket) | `SOCKET_BIND` (with domain in details) |
 | Socket listen | `listen()` | `SOCKET_LISTEN` |
 | Socket accept | `accept()` | `SOCKET_ACCEPT` |
@@ -327,6 +334,9 @@ class ProjectScanner:
 | Resource limits | `setrlimit()` | `PROCESS_CONTROL` (with `capability: "sys_resource"`) |
 | Capabilities | `cap_init()`, `cap_set_proc()`, `cap_get_proc()` | `CAPABILITY` |
 | Daemonize | `daemon()` | `DAEMON` |
+| Process exec | `execl`, `execv`, `system`, `popen` (via SymbolScanner) | `PROCESS_EXEC` |
+| SELinux API | `getcon`, `setcon`, `security_compute_av`, `#include <selinux/selinux.h>` | `SELINUX_API` |
+| Config file parse | `KEY=VALUE` files → absolute paths extracted | `FILE_WRITE` (source=config_file) |
 
 **Deduplication**: Some patterns (notably syslog) may match dozens of times in a single file. The analyzer deduplicates by emitting only one Access per distinct function name. One `logging_send_syslog_msg()` macro is sufficient regardless of how many `syslog()` calls exist. Cross-file deduplication is performed in `analyze_directory` after aggregating per-file results — duplicate SYSLOG accesses for the same function name are collapsed.
 
@@ -528,6 +538,7 @@ class IntentClassifier:
 | SysfsRule | file read on `/sys/**` paths | SYSFS_READ |
 | SELinuxApiRule | `access_type == SELINUX_API` (from symbol detection) | SELINUX_API |
 | NetlinkSocketRule | `access_type == NETLINK_SOCKET` | NETLINK_SOCKET |
+| ConfigDataRule | `FILE_WRITE` with `source == "config_file"` | DATA_DIR |
 
 ---
 
@@ -539,6 +550,17 @@ class IntentClassifier:
 
 ```python
 @dataclass
+class TypeAttribute:
+    """typeattribute statement: typeattribute type_name attribute;"""
+    type_name: str
+    attribute: str
+
+@dataclass
+class RequireBlock:
+    """require block for referencing external attributes/types."""
+    attributes: List[str]
+
+@dataclass
 class PolicyModule:
     """Structured representation of .te policy file"""
     name: str
@@ -546,6 +568,8 @@ class PolicyModule:
     types: List[TypeDeclaration]
     allow_rules: List[AllowRule]
     macro_calls: List[MacroCall]
+    typeattributes: List[TypeAttribute]
+    require: Optional[RequireBlock]
 
     def merge(self, other: 'PolicyModule', strategy: str = "trace-wins"):
         """Merge another policy, handling conflicts"""
@@ -570,8 +594,8 @@ class TEGenerator:
         self.type_generator = TypeGenerator()
         self.macro_lookup = MacroLookup()
 
-    def generate(self, intents: List[Intent], service_info=None) -> PolicyModule:
-        """Generate PolicyModule from classified intents and optional ServiceInfo"""
+    def generate(self, intents: List[Intent], service_info=None, build_info=None) -> PolicyModule:
+        """Generate PolicyModule from classified intents and optional ServiceInfo/BuildInfo"""
         policy = PolicyModule(name=self.module_name, version="1.0.0")
 
         # Add base types
@@ -603,7 +627,9 @@ class TEGenerator:
                     policy.add_macro("manage_files_pattern", [
                         f"{self.module_name}_t", custom_type, custom_type
                     ])
-                elif intent.intent_type.value in ['config_file', 'data_dir']:
+                elif intent.intent_type == IntentType.CONFIG_FILE:
+                    policy.add_macro("files_config_file", [custom_type])
+                elif intent.intent_type == IntentType.DATA_DIR:
                     policy.add_macro("files_type", [custom_type])
 
             # Lookup appropriate macro for the intent
@@ -611,56 +637,38 @@ class TEGenerator:
             if macro:
                 policy.add_macro(macro, [...])
 
+        # Track socket-type flags and port type during intent iteration
+        # has_unix_socket, has_unix_dgram, has_network_server, has_netlink
+
+        # If unix socket + var_run type, add sock file management
+        if has_unix_socket and var_run_type:
+            policy.add_macro("manage_sock_files_pattern", [...])
+
         # Collect self: rule permissions across all intents
         cap_perms = set()
         process_perms = set()
-        has_unix_socket = False
-
-        for intent in intents:
-            if intent.intent_type == IntentType.SELF_CAPABILITY:
-                for access in intent.accesses:
-                    if access.access_type == AccessType.PROCESS_CONTROL:
-                        cap = access.details.get("capability")
-                        if cap:
-                            cap_perms.add(cap)
-                        process_perms.add("setrlimit")
-                    elif access.access_type == AccessType.CAPABILITY:
-                        process_perms.update(["getcap", "setcap"])
-
-            elif intent.intent_type == IntentType.UNIX_SOCKET_SERVER:
-                has_unix_socket = True
+        # ... iterate SELF_CAPABILITY intents to populate ...
 
         # Emit consolidated self: rules
         if cap_perms:
-            policy.allow_rules.append(AllowRule(
-                source=f"{self.module_name}_t",
-                target="self",
-                object_class="capability",
-                permissions=sorted(cap_perms)
-            ))
+            policy.add_allow(self, "capability", sorted(cap_perms))
         if process_perms:
-            policy.allow_rules.append(AllowRule(
-                source=f"{self.module_name}_t",
-                target="self",
-                object_class="process",
-                permissions=sorted(process_perms)
-            ))
+            policy.add_allow(self, "process", sorted(process_perms))
         if has_unix_socket:
-            policy.allow_rules.append(AllowRule(
-                source=f"{self.module_name}_t",
-                target="self",
-                object_class="unix_stream_socket",
-                permissions=["create", "bind", "listen", "accept"]
-            ))
-            # If var_run type exists, also add sock file management
-            for intent in intents:
-                if intent.selinux_type and "_var_run_t" in intent.selinux_type:
-                    policy.add_macro("manage_sock_files_pattern", [
-                        f"{self.module_name}_t", intent.selinux_type, intent.selinux_type
-                    ])
+            policy.add_allow(self, "unix_stream_socket", ["create_stream_socket_perms"])
+        if has_unix_dgram or has_unix_socket:
+            policy.add_allow(self, "unix_dgram_socket", ["create_socket_perms"])
+        if has_netlink:
+            policy.add_allow(self, "netlink_selinux_socket", ["create_socket_perms"])
+        if has_network_server:
+            policy.add_allow(self, "tcp_socket", ["create_stream_socket_perms"])
+            policy.add_macro("corenet_tcp_sendrecv_generic_node", [...])
+            # port_type: require { attribute port_type; }
+            #            typeattribute module_port_t port_type;
+            #            allow module_t module_port_t:tcp_socket { name_bind };
 
-        # If init script detected via ServiceInfo, add initrc type
-        if service_info and service_info.needs_initrc_exec_t:
+        # If init script detected via ServiceInfo or BuildInfo
+        if service_info?.needs_initrc_exec_t or build_info?.init_script:
             initrc_type = f"{self.module_name}_initrc_exec_t"
             policy.add_type(initrc_type)
             policy.add_macro("init_script_file", [initrc_type])
@@ -672,18 +680,23 @@ class FCGenerator:
         self.module_name = module_name
         self.exec_path = exec_path
 
-    def generate(self, intents: List[Intent], service_info=None) -> FileContexts:
-        """Generate FileContexts from intents, known paths, and service info"""
+    def generate(self, intents: List[Intent], service_info=None, build_info=None) -> FileContexts:
+        """Generate FileContexts from intents, known paths, and service/build info"""
         contexts = FileContexts()
 
         # Add executable context
         if self.exec_path:
             contexts.add_entry(self.exec_path, f"{self.module_name}_exec_t")
 
-        # Add initrc context from service detection
+        # Add initrc context from service detection or Makefile INITSCRIPT
         if service_info and service_info.has_init_script:
             contexts.add_entry(
                 f"/etc/rc.d/init.d/{self.module_name}",
+                f"{self.module_name}_initrc_exec_t"
+            )
+        elif build_info and build_info.init_script:
+            contexts.add_entry(
+                f"/etc/rc.d/init.d/{build_info.init_script}",
                 f"{self.module_name}_initrc_exec_t"
             )
 
@@ -695,25 +708,33 @@ class FCGenerator:
                 if access.path and access.path.startswith("/"):
                     fc_path = self._path_to_fc_regex(access.path, intent.selinux_type)
                     contexts.add_entry(fc_path, intent.selinux_type)
+                    # Emit /run alias when /var/run path generated (and vice versa)
+                    self._run_alias(fc_path, intent.selinux_type, contexts)
 
         return contexts
 
     def _path_to_fc_regex(self, path: str, selinux_type: str) -> str:
         """Convert paths to .fc regex patterns.
 
-        Runtime dirs (var_run_t) get regex for the parent directory
-        (e.g., /run/setrans(/.*)?) since SELinux labels directory trees.
+        Runtime dirs (var_run_t) and data dirs (data_t) get regex for
+        the parent directory (e.g., /run/setrans(/.*)?) since SELinux
+        labels directory trees.
         """
         if "_var_run_t" in selinux_type:
             # Generate regex for directory tree
-            parts = Path(path).parts
-            for i, part in enumerate(parts):
-                if part in ("run", "var"):
-                    if i + 1 < len(parts) and parts[i + 1] != "run":
-                        return "/".join(parts[:i + 2]) + "(/.*)?"
-                    elif i + 2 < len(parts):
-                        return "/".join(parts[:i + 3]) + "(/.*)?"
+            ...
+        elif "_data_t" in selinux_type:
+            # Generate regex for data directory tree (e.g., /var/testprog(/.*)?)
+            parent = str(Path(path).parent)
+            return parent + "(/.*)?"
         return path
+
+    def _run_alias(self, fc_path: str, selinux_type: str, contexts):
+        """Emit /run/X alias when /var/run/X generated and vice versa."""
+        if "/var/run/" in fc_path:
+            contexts.add_entry(fc_path.replace("/var/run/", "/run/"), selinux_type)
+        elif fc_path.startswith("/run/") and "/var/" not in fc_path:
+            contexts.add_entry(fc_path.replace("/run/", "/var/run/"), selinux_type)
 ```
 
 **Type generation rules**:
@@ -722,24 +743,31 @@ class FCGenerator:
 |--------|---------------|-------------------|
 | (base) | `{module}_t` | — |
 | (base) | `{module}_exec_t` | `init_daemon_domain()` |
-| CONFIG_FILE | `{module}_conf_t` | `files_type()` |
+| CONFIG_FILE | `{module}_conf_t` | `files_config_file()` + `read_files_pattern()` |
 | PID_FILE | `{module}_var_run_t` | `files_pid_file()` + `files_pid_filetrans()` + `manage_dirs_pattern()` + `manage_files_pattern()` |
 | PID_FILE + UNIX_SOCKET_SERVER | `{module}_var_run_t` | Above + `manage_sock_files_pattern()` |
-| DATA_DIR | `{module}_data_t` | `files_type()` |
-| LOG_FILE | `{module}_log_t` | `logging_log_file()` |
+| DATA_DIR | `{module}_data_t` | `files_type()` + `manage_dirs_pattern()` + `manage_files_pattern()` |
+| LOG_FILE | `{module}_log_t` | `logging_log_file()` + `logging_log_filetrans()` + `manage_files_pattern()` |
+| TEMP_FILE | `{module}_tmp_t` | `files_tmp_file()` + `files_tmp_filetrans()` + `manage_files_pattern()` |
+| NETWORK_SERVER | `{module}_port_t` | `typeattribute port_type` + `name_bind` |
 | DAEMON_PROCESS | (confirms `init_daemon_domain` is correct) | — |
-| ServiceInfo (init script) | `{module}_initrc_exec_t` | `init_script_file()` |
+| ServiceInfo / BuildInfo | `{module}_initrc_exec_t` | `init_script_file()` |
 
 **self: allow rule generation**:
 
-Rules are collected across all intents and emitted as consolidated allow statements (one `self:capability`, one `self:process`, one `self:unix_stream_socket`):
+Rules are collected across all intents and emitted as consolidated allow statements:
 
 | IntentType / Source | Generated allow rule |
 |------------|---------------------|
 | SELF_CAPABILITY (setrlimit) | `allow {mod}_t self:capability sys_resource;` |
 | SELF_CAPABILITY (setrlimit) | `allow {mod}_t self:process setrlimit;` (companion) |
 | SELF_CAPABILITY (cap_*) | `allow {mod}_t self:process { getcap setcap };` |
-| UNIX_SOCKET_SERVER | `allow {mod}_t self:unix_stream_socket { create bind listen accept };` |
+| UNIX_SOCKET_SERVER | `allow {mod}_t self:unix_stream_socket create_stream_socket_perms;` |
+| UNIX_SOCKET_SERVER / DGRAM | `allow {mod}_t self:unix_dgram_socket create_socket_perms;` |
+| NETLINK_SOCKET | `allow {mod}_t self:netlink_selinux_socket create_socket_perms;` |
+| NETWORK_SERVER | `allow {mod}_t self:tcp_socket create_stream_socket_perms;` |
+| NETWORK_SERVER | `corenet_tcp_sendrecv_generic_node({mod}_t)` |
+| NETWORK_SERVER (port) | `allow {mod}_t {mod}_port_t:tcp_socket { name_bind };` |
 
 ---
 
@@ -877,12 +905,11 @@ class MacroLookup:
     # Hardcoded mappings for common patterns (fast path)
     KNOWN_MAPPINGS = {
         IntentType.SYSLOG: "logging_send_syslog_msg",
-        IntentType.PID_FILE: "files_pid_filetrans",
         IntentType.CONFIG_FILE: "read_files_pattern",
-        IntentType.LOG_FILE: "logging_log_file",
         IntentType.NETWORK_SERVER: "corenet_tcp_bind_generic_node",
-        IntentType.DATA_DIR: "manage_files_pattern",
     }
+    # Note: PID_FILE, DATA_DIR, LOG_FILE, TEMP_FILE macros are now
+    # handled directly by TEGenerator for finer control over arguments.
 
     # Intent types that produce self: allow rules instead of macros
     SELF_RULE_INTENTS = {

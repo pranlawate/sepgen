@@ -59,7 +59,7 @@ Output: `myapp.te`, `myapp.fc` — ready to compile and install.
 | Write to `/var/app/data.txt` | `allow app_t var_t:file { create write };` | Creates `app_data_t`, uses `manage_files_pattern()` |
 | Syslog socket | `allow app_t devlog_t:sock_file write;` + 3 more rules | `logging_send_syslog_msg(app_t)` (deduplicated) |
 | Bind TCP port | `allow app_t port_t:tcp_socket name_bind;` | Creates `app_port_t`, `tcp_socket create_stream_socket_perms` + `corenet_tcp_*` |
-| Bind Unix socket | `allow app_t self:unix_stream_socket ...;` (many rules) | `allow app_t self:unix_stream_socket { create bind listen accept };` |
+| Bind Unix socket | `allow app_t self:unix_stream_socket ...;` (many rules) | `allow app_t self:unix_stream_socket create_stream_socket_perms;` |
 | `exec*()` / `system()` | *(not generated)* | `can_exec(app_t, app_exec_t)` + `corecmd_search_bin(app_t)` |
 | Read `/proc/*` | *(not generated)* | `kernel_read_system_state(app_t)` |
 | SELinux API calls | *(not generated)* | `selinux_compute_access_vector(app_t)` + `seutil_read_config(app_t)` |
@@ -252,14 +252,21 @@ sepgen classifies raw accesses into security intents using deterministic rules:
 | Access Pattern | Intent | Custom Type | Macro / Rule |
 |---|---|---|---|
 | `/var/run/*.pid` + write | PID_FILE | `{mod}_var_run_t` | `files_pid_filetrans()` + `manage_files_pattern()` |
-| `/etc/**` + read | CONFIG_FILE | `{mod}_conf_t` | `read_files_pattern()` |
-| `/var/*/data/**` + write | DATA_DIR | `{mod}_data_t` | `manage_files_pattern()` |
+| `/etc/**` + read, `*.conf` | CONFIG_FILE | `{mod}_conf_t` | `files_config_file()` + `read_files_pattern()` |
+| Data path from `.conf` file | DATA_DIR | `{mod}_data_t` | `files_type()` + `manage_files_pattern()` |
+| `/var/log/**` + write | LOG_FILE | `{mod}_log_t` | `logging_log_file()` + `logging_log_filetrans()` |
+| `/tmp/**` + write | TEMP_FILE | `{mod}_tmp_t` | `files_tmp_file()` + `files_tmp_filetrans()` |
 | `syslog()` / `openlog()` | SYSLOG | — | `logging_send_syslog_msg()` |
-| `bind()` on AF_INET | NETWORK_SERVER | — | `corenet_tcp_bind_generic_node()` |
-| `bind()` on PF_UNIX | UNIX_SOCKET_SERVER | — | `allow ... self:unix_stream_socket { ... };` |
+| `bind()` on AF_INET | NETWORK_SERVER | `{mod}_port_t` | `corenet_tcp_bind/sendrecv` + `tcp_socket create_stream_socket_perms` |
+| `bind()` on PF_UNIX | UNIX_SOCKET_SERVER | — | `allow ... self:unix_stream_socket create_stream_socket_perms;` |
+| `socket(AF_NETLINK, ...)` | NETLINK_SOCKET | — | `allow ... self:netlink_selinux_socket create_socket_perms;` |
+| `exec*()` / `system()` | EXEC_BINARY | — | `can_exec()` + `corecmd_search_bin()` |
+| `fopen("/proc/...")` | KERNEL_STATE | — | `kernel_read_system_state()` |
+| `fopen("/sys/...")` | SYSFS_READ | — | `dev_read_sysfs()` |
+| `getcon()` / SELinux API | SELINUX_API | — | `selinux_compute_access_vector()` + `seutil_read_config()` |
 | `setrlimit()` / `cap_*()` | SELF_CAPABILITY | — | `allow ... self:capability ...;` + `self:process ...;` |
 | `daemon()` | DAEMON_PROCESS | — | confirms `init_daemon_domain()` |
-| `.init` file detected | — | `{mod}_initrc_exec_t` | `init_script_file()` |
+| `.init` file / Makefile | — | `{mod}_initrc_exec_t` | `init_script_file()` |
 
 ## Installation
 
@@ -336,7 +343,7 @@ Implemented:
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 14 deterministic rules
+- Intent classification engine with 15 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
