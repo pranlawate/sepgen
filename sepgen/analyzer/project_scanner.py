@@ -6,6 +6,7 @@ from sepgen.analyzer.c_analyzer import CAnalyzer
 from sepgen.analyzer.cmake_parser import CMakeParser
 from sepgen.analyzer.config_parser import ConfigParser
 from sepgen.analyzer.makefile_parser import BuildInfo, MakefileParser
+from sepgen.analyzer.python_analyzer import PythonAnalyzer
 from sepgen.analyzer.service_detector import ServiceDetector, ServiceInfo
 from sepgen.analyzer.symbol_scanner import SymbolScanner
 from sepgen.models.access import Access, AccessType
@@ -31,6 +32,20 @@ class ProjectScanner:
         self.service_detector = ServiceDetector()
         self.makefile_parser = MakefileParser()
         self.cmake_parser = CMakeParser()
+        self.python_analyzer = PythonAnalyzer()
+
+    def _is_python_project(self, source_path: Path) -> bool:
+        """Detect if the project is Python-based."""
+        if source_path.is_file() and source_path.suffix == '.py':
+            return True
+        if source_path.is_dir():
+            has_py = any(source_path.rglob("*.py"))
+            has_c = any(source_path.rglob("*.c")) or any(source_path.rglob("*.cpp"))
+            if has_py and not has_c:
+                return True
+            if (source_path / "setup.py").exists() or (source_path / "pyproject.toml").exists():
+                return True
+        return False
 
     def scan(self, source_path: Path, module_name: str) -> ProjectInfo:
         info = ProjectInfo(module_name=module_name)
@@ -38,6 +53,8 @@ class ProjectScanner:
         if source_path.is_dir():
             info.accesses = self.c_analyzer.analyze_directory(source_path)
             info.accesses.extend(self.symbol_scanner.scan_directory(source_path))
+            if self._is_python_project(source_path):
+                info.accesses.extend(self.python_analyzer.analyze_directory(source_path))
             info.service_info = self.service_detector.detect_service_files(source_path, search_parent=True)
             info.build_info = self.makefile_parser.parse(source_path)
             if not info.build_info.prog_name:
