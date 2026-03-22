@@ -1,8 +1,9 @@
 # Trace Mode Scope: Gaps Not Achievable with Static Analysis
 
 **Date:** 2026-03-22
-**Status:** Final — validated against 6 test apps (testprog, testprog-net,
-mcstransd, chronyd, dbus, vsftpd) with zero remaining static analysis gaps.
+**Status:** Final — validated against 7 test apps (testprog, testprog-net,
+mcstransd, chronyd, dbus, vsftpd, libvirt) with zero remaining static
+analysis gaps.
 
 **Purpose:** Reference for `sepgen trace` implementation — these are policy
 elements that cannot be derived from source code analysis alone.
@@ -36,7 +37,12 @@ observation.
 | `self:udp_socket create_socket_perms` | chronyd | `socket(domain, type \| get_open_flags(flags), 0)` — domain and type are parameters |
 | UDP `corenet_udp_*` macros | chronyd | Same variable-based socket calls |
 | Missing socket binds (domain=None) | chronyd | 7 bind() calls with no resolvable socket domain |
-| `self:netlink_route_socket` | chronyc | Created via library internals, not explicit in source |
+| `self:netlink_route_socket` | chronyc, libvirt | Created via library internals (virnetlink.c uses AF_NETLINK but via wrapper) |
+| `self:tun_socket` | libvirt | TUN/TAP device interaction via ioctl, not socket() |
+| `self:rawip_socket` | libvirt | Raw IP sockets created via variable-based calls |
+| `self:packet_socket` | libvirt | AF_PACKET sockets for network bridging |
+| `self:netlink_kobject_uevent_socket` | libvirt | NETLINK_KOBJECT_UEVENT in variable-based socket calls |
+| `self:netlink_generic_socket` | libvirt | NETLINK_GENERIC in variable-based socket calls |
 
 **What trace reveals:** Actual `socket(2)` syscall arguments visible in strace
 output as resolved integers (e.g., `socket(AF_INET, SOCK_DGRAM, 0) = 5`).
@@ -55,6 +61,12 @@ library behavior, with no corresponding source code pattern.
 | `auth_use_nsswitch()` | dbus, chronyd, vsftpd | NSS resolution via getpwnam/getgrnam — glibc internal |
 | `dev_rw_realtime_clock()` | chronyd | `/dev/ptp*` path built dynamically from kernel ioctl |
 | `self:key manage_key_perms` | vsftpd | Kernel keyring operations — no explicit C API call |
+| `dev_rw_kvm()` | libvirt | `/dev/kvm` opened at runtime based on hypervisor availability |
+| `dev_rw_vhost()` | libvirt | `/dev/vhost-net`, `/dev/vhost-vsock`, `/dev/vhost-scsi` — device passthrough |
+| `dev_rw_loop_control()` | libvirt | `/dev/loop-control` for loop device management |
+| `dev_read_cpuid()` | libvirt | `/dev/cpu/0/msr` for CPU feature detection |
+| `dev_rw_sev()` | libvirt | `/dev/sev` for AMD SEV encrypted VMs |
+| `dev_rw_vfio()` | libvirt | `/dev/vfio/*` for device passthrough |
 
 **What trace reveals:** strace captures kernel-initiated syscalls, inherited
 file descriptors, and glibc-internal operations that have no source code
@@ -76,6 +88,11 @@ Paths and types that come from distribution packaging, not upstream source.
 | `ftpd_keytab_t` | vsftpd | Kerberos keytab path — deployment specific |
 | `ftpd_lock_t` | vsftpd | Lock file path from runtime convention |
 | Exec path in `/usr/bin` vs `/usr/sbin` | vsftpd | Makefile says `/usr/sbin`, distro installs to `/usr/bin` |
+| `/etc/libvirt` config directory | libvirt | Build system (meson) template variables |
+| `/var/lib/libvirt` data directory | libvirt | Build system (meson) template variables |
+| `/var/log/libvirt` log directory | libvirt | Build system (meson) template variables |
+| `/run/libvirt` runtime directory | libvirt | Build system (meson) template variables |
+| `virtd_exec_t` for `/usr/bin/libvirtd` | libvirt | Executable name from meson build, not Makefile |
 
 **What trace reveals:** Actual file paths accessed at runtime, resolved from
 config files, environment variables, and distro-specific conventions.
@@ -153,6 +170,10 @@ Paths and operations only observable when the application runs.
 | Device node access (`/dev/ptp*`) | chronyd | PTP clock device discovered at runtime |
 | Inherited file descriptors | all | FDs from init/systemd |
 | Lock files | vsftpd | `/run/lock/subsys/*.ftpd` — runtime convention |
+| Device passthrough paths | libvirt | `/dev/vfio/*`, `/dev/kvm`, `/dev/sev` — hypervisor-specific |
+| VM image paths | libvirt | `/var/lib/libvirt/images/*` — config-driven |
+| Network bridge setup | libvirt | `AF_NETLINK` + `NETLINK_ROUTE` for bridge/tap management |
+| SELinux VM labeling | libvirt | `setfilecon()`, `setexeccon()` — dynamic context transitions |
 
 ---
 
@@ -166,6 +187,7 @@ Paths and operations only observable when the application runs.
 | chronyd | NTP daemon | UDP sockets with real args, /dev/ptp*, config-driven paths |
 | dbus | IPC broker | Netlink selinux socket, config paths, multi-domain transitions |
 | vsftpd | FTP daemon | chroot at runtime, config-driven paths, lock files, tunables |
+| libvirt | VM manager | Device nodes (/dev/kvm, /dev/vfio), netlink socket types, multi-domain transitions, MLS labels |
 
 ---
 
