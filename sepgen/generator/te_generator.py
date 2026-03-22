@@ -275,4 +275,61 @@ class TEGenerator:
             policy.add_type(initrc_type)
             policy.add_macro("init_script_file", [initrc_type])
 
+        self._emit_path_macros(policy, intents)
+
         return policy
+
+    PATH_MACROS = [
+        ("/proc/net/", "kernel_read_network_state"),
+        ("/proc/sys/net/", "kernel_read_net_sysctls"),
+        ("/proc/sys/kernel/", "kernel_read_kernel_sysctls"),
+        ("/proc/", "kernel_read_system_state"),
+        ("/sys/", "dev_read_sysfs"),
+        ("/etc/resolv.conf", "sysnet_read_config"),
+        ("/etc/hosts", "sysnet_read_config"),
+        ("/etc/host.conf", "sysnet_read_config"),
+        ("/etc/pki/", "miscfiles_read_generic_certs"),
+        ("/etc/ssl/", "miscfiles_read_generic_certs"),
+        ("/usr/lib/locale/", "miscfiles_read_localization"),
+        ("/usr/share/locale/", "miscfiles_read_localization"),
+        ("/etc/mtab", "files_read_etc_runtime_files"),
+        ("/etc/fstab", "files_read_etc_runtime_files"),
+    ]
+
+    EXEC_MACROS = [
+        ("/bin/sh", "corecmd_exec_shell"),
+        ("/bin/bash", "corecmd_exec_shell"),
+        ("/usr/bin/sh", "corecmd_exec_shell"),
+        ("/usr/bin/bash", "corecmd_exec_shell"),
+        ("/usr/bin/systemctl", "systemd_exec_systemctl"),
+        ("/bin/systemctl", "systemd_exec_systemctl"),
+    ]
+
+    def _emit_path_macros(self, policy: PolicyModule, intents: List[Intent]) -> None:
+        """Emit macros for well-known system paths found in accesses."""
+        emitted = set()
+        mod = f"{self.module_name}_t"
+
+        for intent in intents:
+            for access in intent.accesses:
+                path = access.path
+                if not path:
+                    continue
+
+                if access.access_type == AccessType.PROCESS_EXEC:
+                    for prefix, macro in self.EXEC_MACROS:
+                        if path == prefix or path.endswith("/" + prefix.split("/")[-1]):
+                            if macro not in emitted:
+                                emitted.add(macro)
+                                policy.add_macro(macro, [mod])
+                    if path.startswith("/usr/bin/") or path.startswith("/usr/sbin/") or path.startswith("/bin/"):
+                        if "corecmd_exec_bin" not in emitted:
+                            emitted.add("corecmd_exec_bin")
+                            policy.add_macro("corecmd_exec_bin", [mod])
+                    continue
+
+                for prefix, macro in self.PATH_MACROS:
+                    if path.startswith(prefix) or path == prefix.rstrip("/"):
+                        if macro not in emitted:
+                            emitted.add(macro)
+                            policy.add_macro(macro, [mod])
