@@ -336,14 +336,14 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** Static analysis refined — ready for trace mode
+**Phase:** Static analysis complete — all regex-achievable gaps closed, ready for trace mode
 
 Implemented:
 - Core data models (Access, Intent, PolicyModule, FileContexts)
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 17 deterministic rules
+- Intent classification engine with 19 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -365,6 +365,8 @@ Implemented:
 - /dev/urandom and /dev/random -> dev_read_urand() macro
 - Wrapper function socket detection (catches indirect socket creation via helper functions)
 - Template config file scanning (.conf.in with XML path extraction)
+- Device path string literal scanner (/dev/urandom, /dev/random in any context)
+- SHM/IPC detection (shmget, shm_open) with self:shm allow rules
 - UDP and TCP socket protocol awareness (separate corenet_udp_* and corenet_tcp_* macros)
 - Socket type propagation (SOCK_DGRAM vs SOCK_STREAM through socket→bind chain)
 - `self:` allow rules (capability with specific caps from setuid/setgid/chown/etc., process, unix_stream_socket, tcp_socket, udp_socket, unix_dgram_socket, netlink)
@@ -387,7 +389,8 @@ Future enhancements:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.7)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.8)
+- [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace mode
 - [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
 - [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
 - [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
@@ -395,6 +398,7 @@ Future enhancements:
 - [Implementation Plan — Max Static Analysis](docs/superpowers/plans/2026-03-22-max-static-analysis.md)
 - [Implementation Plan — General Improvements](docs/superpowers/plans/2026-03-22-general-improvements.md)
 - [Implementation Plan — Tier A Gaps](docs/superpowers/plans/2026-03-22-tier-a-gaps.md)
+- [Implementation Plan — Final Static Gaps](docs/superpowers/plans/2026-03-22-final-static-gaps.md)
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License

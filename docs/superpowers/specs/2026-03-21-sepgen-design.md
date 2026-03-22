@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.7
+**Version:** 1.8
 **Date:** 2026-03-22
-**Status:** Updated — Tier A gaps: CAP_* macro detection, cap_from_text parsing, kill() capability, wrapper socket detection, /dev/urandom rule, CapabilityBoundingSet parsing, .conf.in template scanning
+**Status:** Static analysis complete — device path string scanner, SHM/IPC intent; all regex-achievable gaps closed
 
 ---
 
@@ -466,6 +466,7 @@ class IntentType(Enum):
     SELINUX_API = "selinux_api"            # getcon/setcon → seutil_read_config
     NETLINK_SOCKET = "netlink_socket"      # AF_NETLINK → netlink_*_socket
     DEV_RANDOM = "dev_random"              # /dev/urandom → dev_read_urand
+    SHM_ACCESS = "shm_access"              # shmget/shm_open → self:shm
     TERMINAL_IO = "terminal_io"
     SHARED_LIBRARY = "shared_library"
     UNKNOWN = "unknown"
@@ -780,6 +781,8 @@ Rules are collected across all intents and emitted as consolidated allow stateme
 | NETWORK_SERVER (port) | `allow {mod}_t {mod}_port_t:tcp_socket { name_bind };` |
 | UDP_NETWORK_SERVER | `allow {mod}_t self:udp_socket create_socket_perms;` |
 | UDP_NETWORK_SERVER | `corenet_udp_sendrecv_generic_node({mod}_t)` + `corenet_udp_bind_generic_node({mod}_t)` |
+| DEV_RANDOM | `dev_read_urand({mod}_t)` |
+| SHM_ACCESS | `allow {mod}_t self:shm create_shm_perms;` |
 
 ---
 
