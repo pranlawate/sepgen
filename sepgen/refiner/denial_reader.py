@@ -57,8 +57,8 @@ class DenialReader:
             scontext = log.get("scontext", "")
             tcontext = log.get("tcontext", "")
 
-            source_type = scontext.split(":")[-2] if ":" in scontext else scontext
-            target_type = tcontext.split(":")[-2] if ":" in tcontext else tcontext
+            source_type = self._extract_type(scontext)
+            target_type = self._extract_type(tcontext)
 
             if module_type and source_type != module_type:
                 continue
@@ -74,6 +74,18 @@ class DenialReader:
             ))
 
         return denials
+
+    @staticmethod
+    def _extract_type(context: str) -> str:
+        """Extract the SELinux type from a full context string.
+
+        Handles: user:role:type:s0, user:role:type:s0-s0:c0.c1023
+        Returns the type field (3rd colon-separated element).
+        """
+        parts = context.split(":")
+        if len(parts) >= 3:
+            return parts[2]
+        return context
 
     def _fallback_parse(self, log_path: Path, module_type: Optional[str]) -> List[Denial]:
         """Basic regex parsing when avc-parser is not available."""
@@ -97,8 +109,8 @@ class DenialReader:
             tcontext = match.group(3)
             tclass = match.group(4)
 
-            source_type = scontext.split(":")[-2] if ":" in scontext else scontext
-            target_type = tcontext.split(":")[-2] if ":" in tcontext else tcontext
+            source_type = self._extract_type(scontext)
+            target_type = self._extract_type(tcontext)
 
             if module_type and source_type != module_type:
                 continue
