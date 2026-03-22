@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from sepgen.analyzer.c_analyzer import CAnalyzer
+from sepgen.analyzer.cmake_parser import CMakeParser
 from sepgen.analyzer.config_parser import ConfigParser
 from sepgen.analyzer.makefile_parser import BuildInfo, MakefileParser
 from sepgen.analyzer.service_detector import ServiceDetector, ServiceInfo
@@ -29,6 +30,7 @@ class ProjectScanner:
         self.config_parser = ConfigParser()
         self.service_detector = ServiceDetector()
         self.makefile_parser = MakefileParser()
+        self.cmake_parser = CMakeParser()
 
     def scan(self, source_path: Path, module_name: str) -> ProjectInfo:
         info = ProjectInfo(module_name=module_name)
@@ -38,6 +40,8 @@ class ProjectScanner:
             info.accesses.extend(self.symbol_scanner.scan_directory(source_path))
             info.service_info = self.service_detector.detect_service_files(source_path, search_parent=True)
             info.build_info = self.makefile_parser.parse(source_path)
+            if not info.build_info.prog_name:
+                info.build_info = self.cmake_parser.parse(source_path, module_name)
         else:
             info.accesses = self.c_analyzer.analyze_file(source_path)
             info.accesses.extend(self.symbol_scanner.scan_file(source_path))
