@@ -29,5 +29,6 @@ class DataFlowAnalyzer:
                 re.escape(var) +
                 r'(\s*[,)])'
             )
-            result = pattern.sub(rf'\1"{value}"\2', result)
+            safe_value = value.replace('\\', '\\\\')
+            result = pattern.sub(rf'\1"{safe_value}"\2', result)
         return result
