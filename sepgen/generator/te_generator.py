@@ -27,6 +27,9 @@ class TEGenerator:
             f"{self.module_name}_exec_t"
         ])
 
+        if service_info and getattr(service_info, 'needs_nnp', False):
+            policy.add_macro("init_nnp_daemon_domain", [f"{self.module_name}_t"])
+
         has_unix_socket = False
         has_unix_dgram = False
         has_network_server = False

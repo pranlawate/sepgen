@@ -14,6 +14,7 @@ class ServiceInfo:
     pid_paths: List[str] = field(default_factory=list)
     data_paths: List[str] = field(default_factory=list)
     capabilities: List[str] = field(default_factory=list)
+    needs_nnp: bool = False
 
     @property
     def needs_initrc_exec_t(self) -> bool:
@@ -39,6 +40,10 @@ class ServiceDetector:
     CAP_BOUNDING_PATTERN = re.compile(
         r'(CapabilityBoundingSet|AmbientCapabilities)\s*=\s*(.+)'
     )
+    NNP_PATTERN = re.compile(
+        r'(NoNewPrivileges|DynamicUser|ProtectSystem|PrivateDevices)\s*=\s*(true|strict)',
+        re.IGNORECASE
+    )
 
     CONF_EXTENSIONS = ('.conf', '.cfg', '.ini', '.yaml', '.toml', '.json')
 
@@ -56,12 +61,13 @@ class ServiceDetector:
             use_rglob = (search_dir == project_dir)
             pattern_fn = search_dir.rglob if use_rglob else search_dir.glob
 
-            for service_file in pattern_fn("*.service"):
-                if not service_file.is_file():
-                    continue
-                info.has_service_file = True
-                content = service_file.read_text()
-                self._parse_service_content(content, info)
+            for pattern in ("*.service", "*.service.in"):
+                for service_file in pattern_fn(pattern):
+                    if not service_file.is_file():
+                        continue
+                    info.has_service_file = True
+                    content = service_file.read_text()
+                    self._parse_service_content(content, info)
 
             for init_file in pattern_fn("*.init"):
                 if not init_file.is_file():
@@ -119,3 +125,6 @@ class ServiceDetector:
                     cap_name = token[4:].lower()
                     if cap_name not in info.capabilities:
                         info.capabilities.append(cap_name)
+
+        if self.NNP_PATTERN.search(content):
+            info.needs_nnp = True
