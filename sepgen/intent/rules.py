@@ -316,16 +316,55 @@ class MsgqRule(ClassificationRule):
 class NsswitchRule(ClassificationRule):
     """Classify NSS resolution calls (getpwnam, getgrnam, gethostbyname)."""
 
-    NSS_FUNCTIONS = {"getpwnam", "getpwuid", "getgrnam", "getgrgid",
-                     "gethostbyname", "gethostbyname2", "getaddrinfo",
-                     "getpwnam_r", "getgrnam_r"}
-
     def matches(self, access: Access) -> bool:
         return (access.access_type == AccessType.CAPABILITY
                 and access.details.get("capability") == "nsswitch")
 
     def get_intent_type(self) -> IntentType:
         return IntentType.NSSWITCH
+
+
+class DnsResolveRule(ClassificationRule):
+    """Classify DNS resolution (getaddrinfo, gethostbyname)."""
+
+    DNS_FUNCTIONS = {"getaddrinfo", "gethostbyname", "gethostbyname2"}
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type != AccessType.CAPABILITY:
+            return False
+        if access.details.get("capability") != "nsswitch":
+            return False
+        return access.syscall in self.DNS_FUNCTIONS
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.DNS_RESOLVE
+
+
+class DbusClientRule(ClassificationRule):
+    """Classify D-Bus client usage (dbus/sd-bus API or connect to bus socket)."""
+
+    DBUS_SOCKET_PATHS = {"/var/run/dbus/system_bus_socket", "/run/dbus/system_bus_socket"}
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type == AccessType.CAPABILITY:
+            return access.details.get("capability") == "dbus_client"
+        if access.access_type == AccessType.SOCKET_CONNECT:
+            return access.path in self.DBUS_SOCKET_PATHS
+        return False
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.DBUS_CLIENT
+
+
+class AuditWriteRule(ClassificationRule):
+    """Classify audit library usage (audit_open, libaudit.h)."""
+
+    def matches(self, access: Access) -> bool:
+        return (access.access_type == AccessType.CAPABILITY
+                and access.details.get("capability") == "audit_write")
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.AUDIT_WRITE
 
 
 class ConfigDataRule(ClassificationRule):
@@ -351,7 +390,10 @@ DEFAULT_RULES = [
     SyslogRule(),
     DaemonProcessRule(),
     ExecBinaryRule(),
+    DnsResolveRule(),
     NsswitchRule(),
+    DbusClientRule(),
+    AuditWriteRule(),
     SelfCapabilityRule(),
     SELinuxApiRule(),
     ShmRule(),

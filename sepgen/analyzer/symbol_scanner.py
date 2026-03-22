@@ -79,6 +79,18 @@ SYMBOL_MAP: Dict[str, Tuple[AccessType, Dict]] = {
     "avc_has_perm": (AccessType.SELINUX_API, {"api": "avc"}),
     "selabel_open": (AccessType.SELINUX_API, {"api": "selabel"}),
     "selinux_check_access": (AccessType.SELINUX_API, {"api": "check_access"}),
+    # D-Bus API
+    "dbus_bus_get": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "dbus_bus_get_private": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "dbus_connection_open": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "sd_bus_open_system": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "sd_bus_open_user": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "sd_bus_open": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    "sd_bus_default_system": (AccessType.CAPABILITY, {"capability": "dbus_client"}),
+    # Audit API
+    "audit_open": (AccessType.CAPABILITY, {"capability": "audit_write"}),
+    "audit_log_user_message": (AccessType.CAPABILITY, {"capability": "audit_write"}),
+    "audit_log_user_avc_message": (AccessType.CAPABILITY, {"capability": "audit_write"}),
 }
 
 _FUNC_PATTERN = re.compile(
@@ -88,6 +100,8 @@ _FUNC_PATTERN = re.compile(
 
 _SELINUX_INCLUDE = re.compile(r'#include\s+<selinux/selinux\.h>')
 _NETLINK_INCLUDE = re.compile(r'#include\s+<linux/netlink\.h>')
+_DBUS_INCLUDE = re.compile(r'#include\s+<dbus/dbus\.h>|#include\s+<systemd/sd-bus\.h>')
+_AUDIT_INCLUDE = re.compile(r'#include\s+<libaudit\.h>')
 
 
 class SymbolScanner:
@@ -108,6 +122,20 @@ class SymbolScanner:
                 syscall=func,
                 details=dict(details),
                 source_line=code[:match.start()].count('\n') + 1,
+            ))
+
+        has_dbus = any(a.details.get("capability") == "dbus_client" for a in accesses)
+        if not has_dbus and _DBUS_INCLUDE.search(code):
+            accesses.append(Access(
+                access_type=AccessType.CAPABILITY, path="", syscall="dbus_header",
+                details={"capability": "dbus_client"},
+            ))
+
+        has_audit = any(a.details.get("capability") == "audit_write" for a in accesses)
+        if not has_audit and _AUDIT_INCLUDE.search(code):
+            accesses.append(Access(
+                access_type=AccessType.CAPABILITY, path="", syscall="audit_header",
+                details={"capability": "audit_write"},
             ))
 
         return accesses

@@ -140,6 +140,12 @@ class TEGenerator:
                 has_msgq = True
             elif intent.intent_type == IntentType.NSSWITCH:
                 policy.add_macro("auth_use_nsswitch", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.DNS_RESOLVE:
+                policy.add_macro("sysnet_dns_name_resolve", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.DBUS_CLIENT:
+                policy.add_macro("dbus_system_bus_client", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.AUDIT_WRITE:
+                policy.add_macro("logging_send_audit_msgs", [f"{self.module_name}_t"])
 
         if has_unix_socket and var_run_type:
             policy.add_macro("manage_sock_files_pattern", [
@@ -164,7 +170,7 @@ class TEGenerator:
                             process_perms.add("setrlimit")
                     elif access.access_type == AccessType.CAPABILITY:
                         cap = access.details.get("capability")
-                        if cap and cap != "nsswitch":
+                        if cap and cap not in ("nsswitch", "dbus_client", "audit_write"):
                             cap_perms.add(cap)
                         elif not cap:
                             process_perms.update(["getcap", "setcap"])
@@ -256,6 +262,9 @@ class TEGenerator:
                 object_class="msgq",
                 permissions=["create_msgq_perms"]
             ))
+
+        if has_network_server or has_udp_server:
+            policy.add_macro("corenet_all_recvfrom_netlabel", [f"{self.module_name}_t"])
 
         needs_initrc = (
             (service_info and getattr(service_info, 'needs_initrc_exec_t', False))
