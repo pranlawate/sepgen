@@ -1,13 +1,29 @@
-execve("/usr/bin/testapp", ["testapp"], 0x7ffd... /* 24 vars */) = 0
-open("/etc/testapp.conf", O_RDONLY) = 3
-read(3, "port=8080\n", 4096) = 10
-close(3) = 0
-open("/var/run/testapp.pid", O_WRONLY|O_CREAT, 0644) = 3
-write(3, "12345\n", 6) = 6
-close(3) = 0
-socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3
-bind(3, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
-listen(3, 5) = 0
-connect(4, {sa_family=AF_UNIX, sun_path="/dev/log"}, 110) = 0
-sendto(4, "<30>testapp: started\n", 21, 0, NULL, 0) = 21
-open("/nonexistent", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  execve("/usr/bin/testapp", ["testapp"], 0x7ffd... /* 24 vars */) = 0
+1234  openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+1234  openat(AT_FDCWD, "/lib64/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+1234  openat(AT_FDCWD, "/etc/testapp.conf", O_RDONLY) = 3
+1234  openat(AT_FDCWD, "/var/run/testapp.pid", O_WRONLY|O_CREAT, 0644) = 4
+1234  openat(AT_FDCWD, "/dev/urandom", O_RDONLY) = 5
+1234  socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 6
+1234  bind(6, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+1234  listen(6, 5) = 0
+1234  socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 7
+1234  bind(7, {sa_family=AF_INET, sin_port=htons(5353), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+1234  socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 8
+1234  bind(8, {sa_family=AF_UNIX, sun_path="/var/run/testapp/testapp.sock"}, 110) = 0
+1234  socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC, 0) = 9
+1234  connect(9, {sa_family=AF_UNIX, sun_path="/dev/log"}, 110) = 0
+1234  socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) = 10
+1234  unlink("/var/run/testapp/testapp.sock") = 0
+1234  chmod("/var/run/testapp", 0755) = 0
+1234  openat(AT_FDCWD, "/proc/self/status", O_RDONLY) = 3
+1234  openat(AT_FDCWD, "/sys/fs/cgroup/memory", O_RDONLY) = 3
+1234  openat(AT_FDCWD, "/dev/random", O_RDONLY) = 3
+1234  shmget(IPC_PRIVATE, 4096, IPC_CREAT|0600) = 12345
+1234  semget(IPC_PRIVATE, 1, IPC_CREAT|0600) = 67890
+1234  msgget(IPC_PRIVATE, IPC_CREAT|0600) = 11111
+1234  prlimit64(0, RLIMIT_NOFILE, {rlim_cur=65536, rlim_max=65536}, NULL) = 0
+1234  prctl(PR_CAPBSET_READ, CAP_NET_BIND_SERVICE) = 1
+1234  openat(AT_FDCWD, "/nonexistent", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  connect(11, {sa_family=AF_UNIX, sun_path="/var/run/dbus/system_bus_socket"}, 110) = 0
+1234  +++ exited with 0 +++
