@@ -355,70 +355,64 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** Static analysis complete — all regex-achievable gaps closed, ready for trace mode
+**Phase:** Analyze + Trace functional — 73% primary domain coverage against reference policies
+
+Coverage against 505 reference SELinux policies:
+- Capabilities: 25/25 (100%)
+- Top 32 macros: 27/32 (84%)
+- self: object classes: 12/22 (55%)
+- Infrastructure macros: dbus, dns, audit, nsswitch, corenet (detected)
+- Path-to-macro mapping: /proc/*, /etc/resolv.conf, /usr/lib/locale/*, /etc/pki/*, etc.
 
 Implemented:
-- Core data models (Access, Intent, PolicyModule, FileContexts)
-- Static analysis pipeline (C analyzer with regex-based pattern detection)
-- Syscall mapper (C library function → syscall translation)
-- Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 22 deterministic rules
-- SELinux type generator and hybrid macro lookup
-- Policy generation (.te) and file context generation (.fc)
-- Policy serialization (TEWriter, FCWriter)
-- Merge layer with conflict detection and trace-wins strategy
+
+**Static analysis (Phase 1):**
+- C/C++ source analysis (.c, .cc, .cpp, .cxx)
+- 25+ regex detection patterns (file opens, sockets, syslog, capabilities, exec, IPC)
+- 50+ symbol-to-permission mappings (setuid, setgid, kill, chroot, dbus, audit, NSS)
+- All 37 Linux CAP_* macros + cap_from_text() string parsing
+- CapabilityBoundingSet from systemd .service files
+- Makefile + CMake parser for exec_path detection
+- Config file parsing (KEY=VALUE, directive /path, XML template)
+- Service file parsing (ExecStart args, StateDirectory, RuntimeDirectory)
+- Wrapper function socket detection
+- Device path scanner (/dev/urandom, /dev/random)
+- Path-to-macro mapping for system paths (/proc, /sys, /etc, /usr/lib/locale)
+- Infrastructure macros (dbus_system_bus_client, sysnet_dns_name_resolve, logging_send_audit_msgs)
+- 26 deterministic classification rules
+- Intent → type/macro/self-rule generation
+- .fc file context generation with /var/run + /run aliases
+
+**Runtime tracing (Phase 2):**
+- strace parser with FD tracking for socket→bind correlation
+- 15 syscall patterns (open/openat, socket, bind INET/UNIX, connect, listen, execve, unlink, chmod, setrlimit, shmget, semget, msgget, prctl, capget)
+- PID prefix handling for multi-process traces
+- System path filtering (/etc/ld.so.cache, /etc/passwd, etc.)
+- Deduplication before intent classification
+- Analyze + trace merge with trace-wins conflict resolution
+- .fc merge (union of analyze and trace entries)
+
+**Core infrastructure:**
 - CLI with `analyze` and `trace` commands
-- End-to-end integration tests
-- `#define` constant resolution (Preprocessor)
-- String variable tracking (DataFlowAnalyzer)
-- Header-based capability inference (IncludeAnalyzer)
-- Service file detection with argument parsing (config/PID paths from ExecStart)
-- Systemd directory directives (StateDirectory, RuntimeDirectory, LogsDirectory, ReadWritePaths)
-- Config file parsing for data paths (KEY=VALUE and directive /path formats)
-- Multi-file directory analysis with cross-file dedup
-- 25+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon, exec*, /proc, /sys, netlink, CAP_* macros, cap_from_text, kill, wrapper sockets, /dev/urandom)
-- 40+ symbol-to-permission mappings (from sepolicy generate) plus kill()
-- SELinux API detection (getcon, setcon, security_compute_av — real calls only, no header false positives)
-- CAP_* macro detection (CAP_SYS_TIME, CAP_NET_ADMIN, etc.) and cap_from_text() string parsing
-- CapabilityBoundingSet/AmbientCapabilities from systemd .service files
-- /dev/urandom and /dev/random -> dev_read_urand() macro
-- Wrapper function socket detection (catches indirect socket creation via helper functions)
-- Template config file scanning (.conf.in with XML path extraction)
-- Device path string literal scanner (/dev/urandom → dev_read_urand, /dev/random → dev_read_rand)
-- IPC detection: SHM (self:shm), semaphores (self:sem), message queues (self:msgq)
-- NSS resolution detection (getpwnam, getgrnam, getaddrinfo → auth_use_nsswitch)
-- UDP and TCP socket protocol awareness (separate corenet_udp_* and corenet_tcp_* macros)
-- Socket type propagation (SOCK_DGRAM vs SOCK_STREAM through socket→bind chain)
-- `self:` allow rules (capability with specific caps from setuid/setgid/chown/etc., process, unix_stream_socket, tcp_socket, udp_socket, unix_dgram_socket, netlink)
-- `manage_*_pattern` macros for runtime directories
-- Custom port type generation (port_t + port_type attribute)
-- Init script type and `.fc` generation with regex patterns
-- /var/run + /run dual alias in .fc generation
-- VarRunRule, PathPrefixRule, bind path inference, signal_perms
-- MakefileParser, ProjectScanner, SymbolScanner
-- Validated against 9 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, dnf5, and libvirt
+- PolicyMerger for comparing/merging analyze and trace policies
+- TEWriter + FCWriter serialization
+- 165 unit tests
+- Validated against 9 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, dnf5, libvirt
 
 Future enhancements:
-- Interactive tracing mode with live UI
-- Multi-session management
-- Validation mode (compare against running policy)
-- Tree-sitter AST parsing (replacing regex)
+- Refine command (update policy from audit log via avc-parser)
+- Named port type lookup (port number → ntp_port_t, http_port_t)
+- Tree-sitter AST parsing (replacing regex for variable tracking)
 - `.if` interface file generation
-- Refine command (update policy from audit log)
 - Policy archetypes (daemon vs user app vs inetd vs dbus)
+- Interactive tracing mode with live UI
+- Python source analysis
 
 ## Design Documentation
 
 - [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.8)
-- [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace mode
-- [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
-- [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
-- [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
-- [Implementation Plan — Auto-Detection](docs/superpowers/plans/2026-03-22-auto-detection.md)
-- [Implementation Plan — Max Static Analysis](docs/superpowers/plans/2026-03-22-max-static-analysis.md)
-- [Implementation Plan — General Improvements](docs/superpowers/plans/2026-03-22-general-improvements.md)
-- [Implementation Plan — Tier A Gaps](docs/superpowers/plans/2026-03-22-tier-a-gaps.md)
-- [Implementation Plan — Final Static Gaps](docs/superpowers/plans/2026-03-22-final-static-gaps.md)
+- [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace/refine phases
+- [Implementation Plans](docs/superpowers/plans/) — 9 implementation plans from MVP to trace mode
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
