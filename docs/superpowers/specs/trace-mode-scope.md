@@ -209,17 +209,70 @@ producing additional Access objects that merge with static analysis results.
 The merge strategy is "trace wins on conflicts" — trace data is more
 authoritative for runtime behavior.
 
-### Recommended trace workflow
+### Type architecture philosophy
 
-```bash
-# Step 1: Generate initial policy from source
-sepgen analyze ./src/ --name myapp
+sepgen generates **template types** that follow a consistent naming pattern
+and get any single app confined and running:
 
-# Step 2: Build and install the application
-make && sudo make install
+| Template type | Purpose |
+|--------------|---------|
+| `{mod}_t` | Process domain |
+| `{mod}_exec_t` | Executable file |
+| `{mod}_conf_t` | Config files — only `{mod}_t` reads |
+| `{mod}_var_run_t` | PID/socket files — only `{mod}_t` manages |
+| `{mod}_data_t` | Application data — only `{mod}_t` manages |
+| `{mod}_log_t` | Log files — only `{mod}_t` writes |
+| `{mod}_tmp_t` | Temp files — only `{mod}_t` uses |
+| `{mod}_port_t` | Network port — only `{mod}_t` binds |
+| `{mod}_initrc_exec_t` | Init script |
 
-# Step 3: Trace to catch runtime-only accesses
-sepgen trace /usr/sbin/myapp -y
+These template types are sufficient for **single-app confinement**. Custom
+types beyond this pattern (e.g., `rpm_var_lib_t` as distinct from generic
+`var_lib_t`) exist to enforce **cross-domain isolation** — when one app's
+data must be protected from other confined domains. For example:
 
-# Result: merged policy with both static and runtime coverage
+- `rpm_var_lib_t` exists because yum/dnf (which transitions to `rpm_t`)
+  needs access but other apps should not touch the RPM database
+- `httpd_var_lib_t` exists because CGI scripts run in a different domain
+  than the web server itself
+- `virt_image_t` exists because VM guest images need different permissions
+  than the libvirt daemon's own data
+
+These cross-domain design decisions emerge during the **refine** phase,
+not during initial policy generation.
+
+### Complete policy development workflow
+
 ```
+sepgen analyze ./src/ --name myapp     # 1. Static analysis (60-80%)
+    ↓
+make && sudo make install              # 2. Build and install
+    ↓
+sepgen trace /usr/sbin/myapp -y        # 3. Runtime trace (→ 85-90%)
+    ↓
+sudo semodule -i myapp.pp              # 4. Install policy
+    ↓
+# Test in enforcing mode               # 5. Enforcing test
+    ↓
+avc-parser /var/log/audit/audit.log    # 6. Analyze denials
+    ↓
+sepgen refine myapp.te                 # 7. Update policy from denials
+    ↓                                  #    (future command)
+semacro which <access pattern>         # 8. Find right macros
+    ↓
+# Reinstall → re-test → done          # 9. Iterate until clean
+```
+
+**Phase 1 (analyze)** generates template types from source code — gets the
+app confined with correct file contexts, macros, and self: rules.
+
+**Phase 2 (trace)** fills in runtime-only accesses — resolved socket args,
+glibc internals, config-driven paths, device access. Merges with Phase 1.
+
+**Phase 3 (refine)** handles what neither analyze nor trace can predict —
+cross-domain access needs, `dontaudit` rules, optional policy blocks, and
+custom types for inter-app isolation. This phase uses `avc-parser` to
+understand denial patterns and `semacro` to find the right macros.
+
+Most apps will be fully functional after Phases 1+2. Phase 3 is for
+production hardening and integration with the broader system policy.

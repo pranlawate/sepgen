@@ -170,6 +170,25 @@ Merge with trace results? [Y/n/diff]
 
 Use `-y` to auto-approve merges (trace wins on conflicts).
 
+### Refine: Production hardening (future)
+
+After analyze + trace, test in enforcing mode. If denials occur, use the
+three-tool suite to resolve them:
+
+```bash
+# Step 5: Analyze denials from enforcing mode testing
+avc-parser /var/log/audit/audit.log
+
+# Step 6: Find the right macro for each denial
+semacro which <access pattern>
+
+# Step 7: Update policy (future: sepgen refine myapp.te)
+```
+
+Most apps are fully functional after analyze + trace. The refine step handles
+cross-domain integration (e.g., logrotate accessing your app's logs) and
+`dontaudit` rules for harmless denials.
+
 ## How It Works
 
 ```
