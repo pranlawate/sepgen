@@ -47,14 +47,24 @@ class CMakeParser:
                 info.prog_name = name
                 return info
 
+        skip = {"sh", "bash", "test", "tests", "check", "bench", "example"}
+
         if all_installed:
             for name in all_installed:
+                if name.lower() in skip:
+                    continue
                 if 'daemon' in name or (name.endswith('d') and len(name) > 2):
                     info.prog_name = name
                     return info
-            info.prog_name = all_installed[0]
+            for name in all_installed:
+                if name.lower() not in skip:
+                    info.prog_name = name
+                    return info
         elif all_executables:
-            info.prog_name = all_executables[0]
+            for name in all_executables:
+                if name.lower() not in skip:
+                    info.prog_name = name
+                    return info
 
         return info
 

@@ -66,11 +66,15 @@ class FCGenerator:
         System: /etc/resolv.conf, /proc/*, /sys/*, other apps' dirs.
         """
         name = self.module_name.lower()
-        name_short = name.rstrip("d")
+        name_base = name.rstrip("d")
+        name_prefix = name.split("-")[0] if "-" in name else name
         path_lower = path.lower()
         parts = path_lower.split("/")
 
-        if name in path_lower or (name_short and len(name_short) > 2 and name_short in path_lower):
+        candidates = {name, name_base, name_prefix}
+        candidates = {c for c in candidates if len(c) > 2}
+
+        if any(c in path_lower for c in candidates):
             return True
 
         if access_source := self._get_access_source(path):

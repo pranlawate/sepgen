@@ -83,9 +83,11 @@ class ServiceDetector:
         match = self.EXEC_START_PATTERN.search(content)
         if match:
             parts = match.group(1).strip().split()
+            SHELL_INTERPRETERS = {"/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash",
+                                   "/usr/bin/python3", "/usr/bin/python", "/usr/bin/env"}
             if parts:
                 path = parts[0]
-                if ':' not in path and '@' not in path:
+                if ':' not in path and '@' not in path and path not in SHELL_INTERPRETERS:
                     info.exec_path = path
             for arg in parts[1:]:
                 if not arg.startswith('/'):
