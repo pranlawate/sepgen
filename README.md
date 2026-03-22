@@ -355,64 +355,74 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** Analyze + Trace functional — 73% primary domain coverage against reference policies
+**Phase:** Analyze + Trace + Python — all three analysis modes functional
+
+Proven: earlyoom confined as `earlyoom_t` with zero AVC denials in SELinux
+enforcing mode — policy generated entirely by sepgen (source + trace).
 
 Coverage against 505 reference SELinux policies:
 - Capabilities: 25/25 (100%)
-- Top 32 macros: 27/32 (84%)
-- self: object classes: 12/22 (55%)
-- Infrastructure macros: dbus, dns, audit, nsswitch, corenet (detected)
-- Path-to-macro mapping: /proc/*, /etc/resolv.conf, /usr/lib/locale/*, /etc/pki/*, etc.
+- Top macros: 84% of most common macros
+- Infrastructure macros: dbus, dns, audit, nsswitch, corenet, kernel, sysfs
+- Path-to-macro mapping: /proc/*, /etc/resolv.conf, /usr/lib/locale/*, /etc/pki/*
 
 Implemented:
 
-**Static analysis (Phase 1):**
-- C/C++ source analysis (.c, .cc, .cpp, .cxx)
-- 25+ regex detection patterns (file opens, sockets, syslog, capabilities, exec, IPC)
+**Static analysis — C/C++ (Phase 1):**
+- C/C++ source analysis (.c, .cc, .cpp, .cxx) using regex patterns
+- 25+ detection patterns (file opens, sockets, syslog, capabilities, exec, IPC)
 - 50+ symbol-to-permission mappings (setuid, setgid, kill, chroot, dbus, audit, NSS)
 - All 37 Linux CAP_* macros + cap_from_text() string parsing
-- CapabilityBoundingSet from systemd .service files
+- CapabilityBoundingSet + NoNewPrivileges/DynamicUser from .service files
 - Makefile + CMake parser for exec_path detection
 - Config file parsing (KEY=VALUE, directive /path, XML template)
-- Service file parsing (ExecStart args, StateDirectory, RuntimeDirectory)
-- Wrapper function socket detection
-- Device path scanner (/dev/urandom, /dev/random)
-- Path-to-macro mapping for system paths (/proc, /sys, /etc, /usr/lib/locale)
+- Service file parsing (ExecStart, StateDirectory, RuntimeDirectory, ReadWritePaths)
+- Wrapper function socket detection, device path scanner
+- Path-to-macro mapping (/proc → kernel_read, /sys → dev_read, /etc/pki → miscfiles)
 - Infrastructure macros (dbus_system_bus_client, sysnet_dns_name_resolve, logging_send_audit_msgs)
-- 26 deterministic classification rules
-- Intent → type/macro/self-rule generation
-- .fc file context generation with /var/run + /run aliases
+- App-owned vs system file .fc filtering (only app-specific paths get .fc entries)
+
+**Static analysis — Python (Phase 1b):**
+- Python source analysis using AST parsing + regex hybrid
+- subprocess.run/call/Popen command detection (PROCESS_EXEC)
+- open(), os.open(), Path.read_text/write_text (FILE_READ/WRITE)
+- dbus.SystemBus() / dasbus imports (DBUS_CLIENT)
+- syslog module, os.setuid/setgid/chroot/kill (CAPABILITY)
+- Path constant extraction from string literals and module-level assignments
+- Auto-detected for Python projects (*.py without *.c, or pyproject.toml)
 
 **Runtime tracing (Phase 2):**
+- SELinux-aware strace with --secontext (shows file and process contexts)
+- Workshop-optimized flags: -fttTvyy -s 256 (follow forks, timestamps, verbose FD)
 - strace parser with FD tracking for socket→bind correlation
 - 15 syscall patterns (open/openat, socket, bind INET/UNIX, connect, listen, execve, unlink, chmod, setrlimit, shmget, semget, msgget, prctl, capget)
-- PID prefix handling for multi-process traces
-- System path filtering (/etc/ld.so.cache, /etc/passwd, etc.)
-- Deduplication before intent classification
+- Auto-filters system-labeled files (lib_t, proc_t, ld_so_cache_t via --secontext)
+- Duration-based tracing with SIGINT for daemons
 - Analyze + trace merge with trace-wins conflict resolution
-- .fc merge (union of analyze and trace entries)
+- domain_read_all_domains_state from /proc/PID/* access patterns
 
 **Core infrastructure:**
 - CLI with `analyze` and `trace` commands
+- 26 deterministic classification rules
 - PolicyMerger for comparing/merging analyze and trace policies
-- TEWriter + FCWriter serialization
+- TEWriter + FCWriter serialization with app-owned .fc filtering
 - 165 unit tests
-- Validated against 9 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, dnf5, libvirt
+- Validated against 10 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, earlyoom, sosreport, libvirt
+- Tested on VM: earlyoom compiled, installed, running as earlyoom_t in enforcing mode
 
 Future enhancements:
 - Refine command (update policy from audit log via avc-parser)
 - Named port type lookup (port number → ntp_port_t, http_port_t)
 - Tree-sitter AST parsing (replacing regex for variable tracking)
 - `.if` interface file generation
+- Go/Rust source analyzers
 - Policy archetypes (daemon vs user app vs inetd vs dbus)
-- Interactive tracing mode with live UI
-- Python source analysis
 
 ## Design Documentation
 
 - [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.8)
 - [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace/refine phases
-- [Implementation Plans](docs/superpowers/plans/) — 9 implementation plans from MVP to trace mode
+- [Implementation Plans](docs/superpowers/plans/) — 10 implementation plans from MVP to Python analyzer
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
