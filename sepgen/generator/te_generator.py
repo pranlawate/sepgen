@@ -1,3 +1,4 @@
+import re
 from typing import List
 from sepgen.models.access import AccessType
 from sepgen.models.intent import Intent, IntentType
@@ -308,16 +309,23 @@ class TEGenerator:
         ("/bin/systemctl", "systemd_exec_systemctl"),
     ]
 
+    PROC_PID_PATTERN = re.compile(r'^/proc/(\d+)/')
+
     def _emit_path_macros(self, policy: PolicyModule, intents: List[Intent]) -> None:
         """Emit macros for well-known system paths found in accesses."""
         emitted = set()
         mod = f"{self.module_name}_t"
+        proc_pids = set()
 
         for intent in intents:
             for access in intent.accesses:
                 path = access.path
                 if not path:
                     continue
+
+                m = self.PROC_PID_PATTERN.match(path)
+                if m:
+                    proc_pids.add(m.group(1))
 
                 if access.access_type == AccessType.PROCESS_EXEC:
                     for prefix, macro in self.EXEC_MACROS:
@@ -336,3 +344,6 @@ class TEGenerator:
                         if macro not in emitted:
                             emitted.add(macro)
                             policy.add_macro(macro, [mod])
+
+        if len(proc_pids) >= 3:
+            policy.add_macro("domain_read_all_domains_state", [mod])

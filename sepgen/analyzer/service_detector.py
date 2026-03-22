@@ -84,7 +84,9 @@ class ServiceDetector:
         if match:
             parts = match.group(1).strip().split()
             if parts:
-                info.exec_path = parts[0]
+                path = parts[0]
+                if ':' not in path and '@' not in path:
+                    info.exec_path = path
             for arg in parts[1:]:
                 if not arg.startswith('/'):
                     continue

@@ -11,11 +11,16 @@ class FCGenerator:
         self.module_name = module_name
         self.exec_path = exec_path
 
+    @staticmethod
+    def _is_template_path(path: str) -> bool:
+        """Check if path contains unresolved template variables."""
+        return ':' in path.split('/')[-1] or '@' in path
+
     def generate(self, intents: List[Intent], service_info=None, build_info=None) -> FileContexts:
         """Generate FileContexts from intents, paths, and service info."""
         contexts = FileContexts()
 
-        if self.exec_path:
+        if self.exec_path and not self._is_template_path(self.exec_path):
             contexts.add_entry(self.exec_path, f"{self.module_name}_exec_t")
 
         if service_info and getattr(service_info, 'has_init_script', False):

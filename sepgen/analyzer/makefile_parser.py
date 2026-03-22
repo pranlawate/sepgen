@@ -27,7 +27,7 @@ class MakefileParser:
     """Parses Makefiles for install targets and binary paths."""
 
     VAR_PATTERN = re.compile(
-        r'^(\w+)\s*(?:\?=|:=|=)\s*(.+)$', re.MULTILINE
+        r'^(\w+)[ \t]*(?:\?=|:=|=)[ \t]*([^\n]+)$', re.MULTILINE
     )
     INSTALL_PROG_PATTERN = re.compile(
         r'install\s+.*\$\(PROG\)\s+\$\(DESTDIR\)\$\((\w+)\)'
@@ -37,6 +37,9 @@ class MakefileParser:
     )
     INSTALL_CMD_PATTERN = re.compile(
         r'\$\(INSTALL\)\s+-m\s+\d+\s+(\w[\w.-]*)\s+(/\S+/s?bin/\S+)'
+    )
+    ALL_TARGET_PATTERN = re.compile(
+        r'^all:\s*(\w[\w.-]*)', re.MULTILINE
     )
 
     def parse(self, project_dir: Path) -> BuildInfo:
@@ -100,6 +103,13 @@ class MakefileParser:
                 if "/sbin/" in dest:
                     info.uses_sbin = True
                 break
+
+        if not info.prog_name:
+            match = self.ALL_TARGET_PATTERN.search(content)
+            if match:
+                candidate = match.group(1)
+                if not candidate.startswith('.') and candidate not in ('all', 'clean', 'install', 'test'):
+                    info.prog_name = candidate
 
     def _resolve_var(self, value: str, variables: dict) -> str:
         """Resolve simple $(VAR) references."""
