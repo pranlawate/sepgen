@@ -37,12 +37,19 @@ class ServiceDetector:
                 search_dirs.append(parent)
 
         for search_dir in search_dirs:
-            for service_file in search_dir.rglob("*.service"):
+            use_rglob = (search_dir == project_dir)
+            pattern_fn = search_dir.rglob if use_rglob else search_dir.glob
+
+            for service_file in pattern_fn("*.service"):
+                if not service_file.is_file():
+                    continue
                 info.has_service_file = True
                 content = service_file.read_text()
                 self._parse_service_content(content, info)
 
-            for init_file in search_dir.rglob("*.init"):
+            for init_file in pattern_fn("*.init"):
+                if not init_file.is_file():
+                    continue
                 info.has_init_script = True
 
             if info.has_service_file or info.has_init_script:

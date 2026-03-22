@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.5
+**Version:** 1.6
 **Date:** 2026-03-22
-**Status:** Updated — maximized static analysis: service arg parsing, config file parsing, /run alias, socket expansion, exec/proc/SELinux API detection, port types, init script .fc
+**Status:** Updated — general improvements: capability details in self:capability, UDP network server support, systemd directory directives, directive-path config parsing, SELinux API false-positive fix
 
 ---
 
@@ -126,8 +126,8 @@ The tool bridges the gap between `audit2allow` (generates raw allow rules) and h
 - `Preprocessor`: Resolves `#define` string constants before pattern matching
 - `IncludeAnalyzer`: Infers capabilities from `#include` headers
 - `DataFlowAnalyzer`: Tracks string variable assignments to resolve indirect paths
-- `ServiceDetector`: Finds `.service` and `.init` files for exec paths, initrc types, config/PID paths from ExecStart args
-- `ConfigParser`: Parses `KEY=VALUE` config files to extract absolute data paths
+- `ServiceDetector`: Finds `.service` and `.init` files for exec paths, initrc types, config/PID paths from ExecStart args, and systemd directory directives (`StateDirectory`, `RuntimeDirectory`, `LogsDirectory`, `CacheDirectory`, `ReadWritePaths`)
+- `ConfigParser`: Parses config files in `KEY=VALUE` and `directive /path` formats to extract absolute data paths
 
 **Design**:
 
@@ -447,7 +447,8 @@ class IntentType(Enum):
     DATA_DIR = "data_dir"
     LOG_FILE = "log_file"
     TEMP_FILE = "temp_file"
-    NETWORK_SERVER = "network_server"       # AF_INET/PF_INET bind
+    NETWORK_SERVER = "network_server"       # AF_INET TCP bind (SOCK_STREAM)
+    UDP_NETWORK_SERVER = "udp_network_server"  # AF_INET UDP bind (SOCK_DGRAM)
     NETWORK_CLIENT = "network_client"
     UNIX_SOCKET_SERVER = "unix_socket_server"  # PF_UNIX/AF_UNIX bind
     SYSLOG = "syslog"
@@ -494,7 +495,8 @@ class IntentClassifier:
             DataDirRule(),           # /var/*/data/** + write → DATA_DIR
             SyslogRule(),            # SYSLOG access type → SYSLOG
             UnixSocketRule(),        # SOCKET_BIND + PF_UNIX → UNIX_SOCKET_SERVER
-            NetworkServerRule(),     # SOCKET_BIND + AF_INET → NETWORK_SERVER
+            UdpServerRule(),         # SOCKET_BIND + SOCK_DGRAM + INET → UDP_NETWORK_SERVER
+            NetworkServerRule(),     # SOCKET_BIND + SOCK_STREAM + INET → NETWORK_SERVER
             SelfCapabilityRule(),    # CAPABILITY/PROCESS_CONTROL → SELF_CAPABILITY
             DaemonProcessRule(),     # DAEMON → DAEMON_PROCESS
         ]
@@ -530,7 +532,8 @@ class IntentClassifier:
 | ConfigFileRule | `/etc/**` + read, `*.conf`, `*.cfg`, etc. | CONFIG_FILE |
 | SyslogRule | `access_type == SYSLOG` | SYSLOG |
 | UnixSocketRule | `SOCKET_BIND` + domain in `[PF_UNIX, AF_UNIX]` | UNIX_SOCKET_SERVER |
-| NetworkServerRule | `SOCKET_BIND` + domain in `[AF_INET, PF_INET, AF_INET6]` | NETWORK_SERVER |
+| UdpServerRule | `SOCKET_BIND` + `sock_type == SOCK_DGRAM` + INET domain | UDP_NETWORK_SERVER |
+| NetworkServerRule | `SOCKET_BIND` + `sock_type == SOCK_STREAM` (or absent) + INET domain | NETWORK_SERVER |
 | SelfCapabilityRule | `access_type in [CAPABILITY, PROCESS_CONTROL]` | SELF_CAPABILITY |
 | DaemonProcessRule | `access_type == DAEMON` | DAEMON_PROCESS |
 | ExecBinaryRule | `access_type == PROCESS_EXEC` | EXEC_BINARY |
@@ -768,6 +771,8 @@ Rules are collected across all intents and emitted as consolidated allow stateme
 | NETWORK_SERVER | `allow {mod}_t self:tcp_socket create_stream_socket_perms;` |
 | NETWORK_SERVER | `corenet_tcp_sendrecv_generic_node({mod}_t)` |
 | NETWORK_SERVER (port) | `allow {mod}_t {mod}_port_t:tcp_socket { name_bind };` |
+| UDP_NETWORK_SERVER | `allow {mod}_t self:udp_socket create_socket_perms;` |
+| UDP_NETWORK_SERVER | `corenet_udp_sendrecv_generic_node({mod}_t)` + `corenet_udp_bind_generic_node({mod}_t)` |
 
 ---
 

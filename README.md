@@ -336,14 +336,14 @@ Typical workflow:
 
 ## Project Status
 
-**Phase:** Static analysis maximized — ready for trace mode
+**Phase:** Static analysis refined — ready for trace mode
 
 Implemented:
 - Core data models (Access, Intent, PolicyModule, FileContexts)
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 15 deterministic rules
+- Intent classification engine with 16 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -354,20 +354,22 @@ Implemented:
 - String variable tracking (DataFlowAnalyzer)
 - Header-based capability inference (IncludeAnalyzer)
 - Service file detection with argument parsing (config/PID paths from ExecStart)
-- Config file parsing for data paths (KEY=VALUE format)
+- Systemd directory directives (StateDirectory, RuntimeDirectory, LogsDirectory, ReadWritePaths)
+- Config file parsing for data paths (KEY=VALUE and directive /path formats)
 - Multi-file directory analysis with cross-file dedup
 - 20+ detection patterns (syslog, open, unlink, chmod, listen, accept, setrlimit, cap_*, daemon, exec*, /proc, /sys, netlink)
 - 40+ symbol-to-permission mappings (from sepolicy generate)
-- SELinux API detection (getcon, setcon, security_compute_av)
-- Socket type expansion (SOCK_DGRAM, AF_NETLINK)
-- `self:` allow rules (capability, process, unix_stream_socket, tcp_socket, unix_dgram_socket, netlink)
+- SELinux API detection (getcon, setcon, security_compute_av — real calls only, no header false positives)
+- UDP and TCP socket protocol awareness (separate corenet_udp_* and corenet_tcp_* macros)
+- Socket type propagation (SOCK_DGRAM vs SOCK_STREAM through socket→bind chain)
+- `self:` allow rules (capability with specific caps from setuid/setgid/chown/etc., process, unix_stream_socket, tcp_socket, udp_socket, unix_dgram_socket, netlink)
 - `manage_*_pattern` macros for runtime directories
 - Custom port type generation (port_t + port_type attribute)
 - Init script type and `.fc` generation with regex patterns
 - /var/run + /run dual alias in .fc generation
 - VarRunRule, PathPrefixRule, bind path inference, signal_perms
 - MakefileParser, ProjectScanner, SymbolScanner
-- Validated against testprog, testprog-net, and mcstransd reference policies
+- Validated against testprog, testprog-net, mcstransd, chronyd, and dbus reference policies
 
 Future enhancements:
 - Interactive tracing mode with live UI
@@ -380,12 +382,13 @@ Future enhancements:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.5)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.6)
 - [Implementation Plan — MVP](docs/superpowers/plans/2026-03-21-sepgen-implementation.md)
 - [Implementation Plan — Analyzer Improvements](docs/superpowers/plans/2026-03-22-analyzer-improvements.md)
 - [Implementation Plan — Coverage Fixes](docs/superpowers/plans/2026-03-22-coverage-fixes.md)
 - [Implementation Plan — Auto-Detection](docs/superpowers/plans/2026-03-22-auto-detection.md)
 - [Implementation Plan — Max Static Analysis](docs/superpowers/plans/2026-03-22-max-static-analysis.md)
+- [Implementation Plan — General Improvements](docs/superpowers/plans/2026-03-22-general-improvements.md)
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
