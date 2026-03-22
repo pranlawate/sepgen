@@ -6,13 +6,29 @@ from typing import Dict, List, Optional, Tuple
 from sepgen.models.access import Access, AccessType
 
 
-class StraceParser:
-    """Parse strace output with FD tracking and comprehensive syscall coverage."""
+SYSTEM_TYPES = {
+    "bin_t", "lib_t", "ld_so_cache_t", "locale_t", "usr_t",
+    "proc_t", "sysfs_t", "kernel_t", "device_t", "null_device_t",
+    "urandom_device_t", "random_device_t",
+    "etc_t", "etc_runtime_t", "net_conf_t", "cert_t",
+    "var_t", "var_run_t", "var_log_t", "tmp_t", "tmpfs_t",
+}
 
-    PID_PREFIX = re.compile(r'^\d+\s+')
+
+class StraceParser:
+    """Parse strace output with FD tracking, SELinux context awareness, and
+    comprehensive syscall coverage.
+
+    Handles --secontext format: PID [context_t] timestamp syscall(args) = ret
+    Skips files with well-known system SELinux types.
+    """
+
+    PID_PREFIX = re.compile(r'^\d+\s+(?:\[\w+\]\s+)?(?:\d{2}:\d{2}:\d{2}\.\d+\s+)?')
+
+    SECONTEXT_FILE = re.compile(r'"([^"]+)"\s+\[(\w+)\]')
 
     OPENAT_PATTERN = re.compile(
-        r'open(?:at)?\((?:AT_FDCWD,\s*)?"([^"]+)",\s*([^)]+)\)\s*=\s*(-?\d+)'
+        r'open(?:at)?\((?:AT_FDCWD[^,]*,\s*)?"([^"]+)"(?:\s+\[(\w+)\])?,\s*([^)]+)\)\s*=\s*(-?\d+)'
     )
     SOCKET_PATTERN = re.compile(
         r'socket\(([^,]+),\s*([^,|)]+)(?:\|[^,]*)?,\s*([^)]*)\)\s*=\s*(-?\d+)'
@@ -83,9 +99,13 @@ class StraceParser:
         if not match:
             return
         path = match.group(1)
-        flags = match.group(2)
-        fd = int(match.group(3))
+        secontext = match.group(2)
+        flags = match.group(3)
+        fd = int(match.group(4))
         if fd < 0:
+            return
+
+        if secontext and secontext in SYSTEM_TYPES:
             return
 
         if 'O_WRONLY' in flags or 'O_RDWR' in flags:
@@ -93,9 +113,13 @@ class StraceParser:
         else:
             access_type = AccessType.FILE_READ
 
+        details = {"flags": flags}
+        if secontext:
+            details["secontext"] = secontext
+
         accesses.append(Access(
             access_type=access_type, path=path, syscall="open",
-            details={"flags": flags},
+            details=details,
         ))
 
     def _parse_socket(self, line: str, accesses: List[Access]) -> None:
