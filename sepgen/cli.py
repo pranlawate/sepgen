@@ -283,41 +283,82 @@ def run_refine(args) -> int:
         for d in denials:
             print(f"  • {d}")
 
-    print(f"[2/3] Suggesting macros... ", end='', flush=True)
+    print(f"[2/3] Analyzing denials... ", end='', flush=True)
 
     suggester = MacroSuggester()
+    aggregates = suggester.check_aggregates(denials)
     suggestions = suggester.suggest(denials)
 
-    print(f"✓ ({len(suggestions)} suggestions)")
+    print(f"✓")
 
-    print(f"\nSuggested additions for {module_name}.te:")
-    for s in suggestions:
-        print(f"  + {s}")
+    chosen_rules = []
+
+    if aggregates:
+        for agg in aggregates:
+            print(f"\nFound {agg['count']} denials for {agg['pattern']} "
+                  f"against {len(agg['targets'])} different domains:")
+            for t in agg['targets'][:5]:
+                print(f"  {module_type} → {t}:{agg['pattern']}")
+            if len(agg['targets']) > 5:
+                print(f"  ... and {len(agg['targets']) - 5} more")
+
+            print(f"\n  Option A (broad):    {agg['broad_macro']}")
+            print(f"    ⚠ {agg['warning']}")
+            print(f"  Option B (specific): {agg['count']} individual allow rules")
+
+            if args.auto:
+                print(f"  → Skipping (use interactive mode to choose)")
+            else:
+                try:
+                    choice = input(f"\n  Which approach? [A/B/skip] ").strip().upper()
+                except EOFError:
+                    choice = "S"
+
+                if choice == "A":
+                    chosen_rules.append(agg['broad_macro'])
+                elif choice == "B":
+                    for s in suggestions:
+                        if any(t in str(s) for t in agg['targets']):
+                            chosen_rules.append(str(s))
+
+    remaining = [s for s in suggestions
+                 if not any(agg['pattern'].split(':')[1] in ' '.join(s.denial.permissions)
+                            and s.denial.target_class == agg['pattern'].split(':')[0]
+                            for agg in aggregates)]
+
+    if remaining:
+        print(f"\nAdditional suggestions ({len(remaining)}):")
+        for s in remaining:
+            print(f"  + {s}")
+            chosen_rules.append(str(s))
+
+    if not chosen_rules and not aggregates:
+        print(f"\nSuggested additions for {module_name}.te:")
+        for s in suggestions:
+            print(f"  + {s}")
+            chosen_rules.append(str(s))
+
+    if not chosen_rules:
+        print(f"\nNo rules selected.")
+        return 0
 
     if args.auto and te_path.exists():
         print(f"\n[3/3] Updating {te_path}... ", end='', flush=True)
 
         content = te_path.read_text()
-        additions = []
-        for s in suggestions:
-            line = str(s)
-            if line not in content:
-                additions.append(line)
+        additions = [r for r in chosen_rules if r not in content]
 
         if additions:
-            insert_point = content.rindex("########################################")
-            policy_section = content[insert_point:]
-            new_content = content[:insert_point] + policy_section.rstrip() + "\n"
+            content = content.rstrip() + "\n"
             for line in additions:
-                new_content += line + "\n"
-
-            te_path.write_text(new_content)
+                content += line + "\n"
+            te_path.write_text(content)
             print(f"✓ ({len(additions)} rules added)")
         else:
             print("✓ (no new rules needed)")
-    elif args.auto:
-        print(f"\nWarning: {te_path} not found. Run analyze/trace first.")
+    elif te_path.exists() and not args.auto:
+        print(f"\nTo apply selected rules: sepgen refine --name {module_name} --auto")
     else:
-        print(f"\nTo apply: sepgen refine --name {module_name} --auto")
+        print(f"\nManually add these to {module_name}.te")
 
     return 0

@@ -35,12 +35,53 @@ class MacroSuggester:
         ("lnk_file", "read"): "read_lnk_files_pattern",
     }
 
+    AGGREGATE_THRESHOLD = 5
+
+    AGGREGATE_MACROS = {
+        ("dir", "search"): "domain_read_all_domains_state",
+        ("dir", "getattr"): "domain_getattr_all_domains",
+        ("process", "signull"): "domain_signull_all_domains",
+        ("process", "signal"): "domain_signal_all_domains",
+        ("file", "read"): "domain_read_all_domains_state",
+        ("file", "getattr"): "domain_getattr_all_domains",
+    }
+
     def suggest(self, denials: List[Denial]) -> List[Suggestion]:
         suggestions = []
         for denial in denials:
             suggestion = self._suggest_one(denial)
             suggestions.append(suggestion)
         return suggestions
+
+    def check_aggregates(self, denials: List[Denial]) -> List[dict]:
+        """Detect patterns where many denials share the same class+perm
+        against different target types. Returns aggregate options for
+        the user to choose from — does NOT auto-apply."""
+        from collections import Counter
+        pattern_counts: Counter = Counter()
+        pattern_targets: dict = {}
+
+        for d in denials:
+            for perm in d.permissions:
+                key = (d.target_class, perm)
+                pattern_counts[key] += 1
+                pattern_targets.setdefault(key, set()).add(d.target_type)
+
+        aggregates = []
+        for (tclass, perm), count in pattern_counts.items():
+            if count >= self.AGGREGATE_THRESHOLD:
+                macro_name = self.AGGREGATE_MACROS.get((tclass, perm))
+                if macro_name and denials:
+                    source = denials[0].source_type
+                    aggregates.append({
+                        "pattern": f"{tclass}:{perm}",
+                        "count": count,
+                        "targets": sorted(pattern_targets[(tclass, perm)]),
+                        "broad_macro": f"{macro_name}({source})",
+                        "warning": f"Grants {perm} to ALL domains — appropriate for process monitors",
+                    })
+
+        return aggregates
 
     def _suggest_one(self, denial: Denial) -> Suggestion:
         if self._check_semacro():
