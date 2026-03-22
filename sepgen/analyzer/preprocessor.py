@@ -18,5 +18,6 @@ class Preprocessor:
         """Replace macro names with their quoted string values."""
         for macro, value in defines.items():
             pattern = r'\b' + re.escape(macro) + r'\b'
-            text = re.sub(pattern, f'"{value}"', text)
+            replacement = '"' + value.replace('\\', '\\\\') + '"'
+            text = re.sub(pattern, replacement, text)
         return text

@@ -109,10 +109,13 @@ class SymbolScanner:
             a.source_file = str(file_path)
         return accesses
 
+    C_EXTENSIONS = ("*.c", "*.cc", "*.cpp", "*.cxx")
+
     def scan_directory(self, dir_path: Path) -> List[Access]:
         accesses = []
-        for c_file in sorted(dir_path.rglob("*.c")):
-            accesses.extend(self.scan_file(c_file))
+        for ext in self.C_EXTENSIONS:
+            for c_file in sorted(dir_path.rglob(ext)):
+                accesses.extend(self.scan_file(c_file))
         return self._deduplicate(accesses)
 
     def _deduplicate(self, accesses: List[Access]) -> List[Access]:
