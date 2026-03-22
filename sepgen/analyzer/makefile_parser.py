@@ -35,6 +35,9 @@ class MakefileParser:
     CP_PROG_PATTERN = re.compile(
         r'cp\s+(\S+)\s+\$\(DESTDIR\)\$\(PREFIX\)/(\w+)/(\S+)'
     )
+    INSTALL_CMD_PATTERN = re.compile(
+        r'\$\(INSTALL\)\s+-m\s+\d+\s+(\w[\w.-]*)\s+(/\S+/s?bin/\S+)'
+    )
 
     def parse(self, project_dir: Path) -> BuildInfo:
         """Find and parse Makefile in project tree."""
@@ -88,6 +91,15 @@ class MakefileParser:
                 info.sbin_dir = f"{info.prefix}/sbin"
             elif subdir == "bin":
                 info.bin_dir = f"{info.prefix}/bin"
+
+        if not info.prog_name:
+            for match in self.INSTALL_CMD_PATTERN.finditer(content):
+                binary = match.group(1)
+                dest = match.group(2)
+                info.prog_name = binary
+                if "/sbin/" in dest:
+                    info.uses_sbin = True
+                break
 
     def _resolve_var(self, value: str, variables: dict) -> str:
         """Resolve simple $(VAR) references."""
