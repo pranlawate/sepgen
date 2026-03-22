@@ -98,16 +98,6 @@ class SymbolScanner:
                 source_line=code[:match.start()].count('\n') + 1,
             ))
 
-        if _SELINUX_INCLUDE.search(code) and not any(
-            a.access_type == AccessType.SELINUX_API for a in accesses
-        ):
-            accesses.append(Access(
-                access_type=AccessType.SELINUX_API,
-                path="",
-                syscall="selinux_header",
-                details={"api": "header"},
-            ))
-
         return accesses
 
     def scan_file(self, file_path: Path) -> List[Access]:

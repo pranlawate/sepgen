@@ -172,16 +172,38 @@ class UnixSocketRule(ClassificationRule):
         return IntentType.UNIX_SOCKET_SERVER
 
 
-class NetworkServerRule(ClassificationRule):
-    """Classify TCP/UDP network server operations"""
+class UdpServerRule(ClassificationRule):
+    """Classify UDP network server operations (SOCK_DGRAM + INET bind)"""
+
+    INET_DOMAINS = ["AF_INET", "PF_INET", "AF_INET6", "PF_INET6"]
 
     def matches(self, access: Access) -> bool:
         if access.access_type != AccessType.SOCKET_BIND:
             return False
+        if access.details.get("sock_type") != "SOCK_DGRAM":
+            return False
+        domain = access.details.get("domain")
+        return domain in self.INET_DOMAINS if domain else False
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.UDP_NETWORK_SERVER
+
+
+class NetworkServerRule(ClassificationRule):
+    """Classify TCP network server operations (SOCK_STREAM + INET bind)"""
+
+    INET_DOMAINS = ["AF_INET", "PF_INET", "AF_INET6", "PF_INET6"]
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type != AccessType.SOCKET_BIND:
+            return False
+        sock_type = access.details.get("sock_type")
+        if sock_type == "SOCK_DGRAM":
+            return False
         domain = access.details.get("domain")
         if domain:
-            return domain in ["AF_INET", "PF_INET", "AF_INET6", "PF_INET6"]
-        return True
+            return domain in self.INET_DOMAINS
+        return False
 
     def get_intent_type(self) -> IntentType:
         return IntentType.NETWORK_SERVER
@@ -267,6 +289,7 @@ DEFAULT_RULES = [
     SELinuxApiRule(),
     NetlinkSocketRule(),
     UnixSocketRule(),
+    UdpServerRule(),
     NetworkServerRule(),
     ConfigDataRule(),
 ]

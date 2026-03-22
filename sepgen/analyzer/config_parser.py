@@ -7,9 +7,10 @@ from sepgen.models.access import Access, AccessType
 
 
 class ConfigParser:
-    """Reads KEY=VALUE config files and extracts absolute paths."""
+    """Reads config files in KEY=VALUE and directive /path formats."""
 
     KV_PATTERN = re.compile(r'^(\w+)\s*=\s*(.+)$', re.MULTILINE)
+    DIRECTIVE_PATH = re.compile(r'^([a-zA-Z]\w*)\s+(/[\w/.\-]+)\s*$', re.MULTILINE)
     ABS_PATH = re.compile(r'^/[\w/.\-]+$')
 
     def parse_config(self, config_path: Path) -> List[Access]:
@@ -20,13 +21,26 @@ class ConfigParser:
 
     def parse_string(self, content: str, source: str = "") -> List[Access]:
         accesses = []
+        seen_paths = set()
         for match in self.KV_PATTERN.finditer(content):
             value = match.group(2).strip()
             if not self.ABS_PATH.match(value):
                 continue
+            seen_paths.add(value)
             accesses.append(Access(
                 access_type=AccessType.FILE_WRITE,
                 path=value,
+                syscall="config_file",
+                details={"key": match.group(1), "source": "config_file", "config_path": source},
+            ))
+        for match in self.DIRECTIVE_PATH.finditer(content):
+            path = match.group(2)
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            accesses.append(Access(
+                access_type=AccessType.FILE_WRITE,
+                path=path,
                 syscall="config_file",
                 details={"key": match.group(1), "source": "config_file", "config_path": source},
             ))
@@ -48,6 +62,8 @@ class ConfigParser:
                     if conf.is_file():
                         accesses.extend(self.parse_config(conf))
             for conf in search_dir.glob("*.conf"):
+                accesses.extend(self.parse_config(conf))
+            for conf in search_dir.glob("*.conf.*"):
                 accesses.extend(self.parse_config(conf))
 
         return accesses

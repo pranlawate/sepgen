@@ -94,3 +94,11 @@ class ProjectScanner:
                     syscall="service_file",
                     details={"source": "service_file"},
                 ))
+        for data_path in info.service_info.data_paths:
+            if data_path not in existing_paths:
+                info.accesses.append(Access(
+                    access_type=AccessType.FILE_WRITE,
+                    path=data_path,
+                    syscall="service_file",
+                    details={"source": "service_file"},
+                ))

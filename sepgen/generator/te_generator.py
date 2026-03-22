@@ -30,6 +30,7 @@ class TEGenerator:
         has_unix_socket = False
         has_unix_dgram = False
         has_network_server = False
+        has_udp_server = False
         has_netlink = False
         var_run_type = None
         port_type = None
@@ -42,6 +43,8 @@ class TEGenerator:
                         has_unix_dgram = True
             elif intent.intent_type == IntentType.NETWORK_SERVER:
                 has_network_server = True
+            elif intent.intent_type == IntentType.UDP_NETWORK_SERVER:
+                has_udp_server = True
             elif intent.intent_type == IntentType.NETLINK_SOCKET:
                 has_netlink = True
 
@@ -140,7 +143,11 @@ class TEGenerator:
                                 cap_perms.add(cap)
                             process_perms.add("setrlimit")
                     elif access.access_type == AccessType.CAPABILITY:
-                        process_perms.update(["getcap", "setcap"])
+                        cap = access.details.get("capability")
+                        if cap:
+                            cap_perms.add(cap)
+                        else:
+                            process_perms.update(["getcap", "setcap"])
 
         if cap_perms:
             policy.allow_rules.append(AllowRule(
@@ -197,6 +204,16 @@ class TEGenerator:
                     object_class="tcp_socket",
                     permissions=["name_bind"]
                 ))
+
+        if has_udp_server:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="udp_socket",
+                permissions=["create_socket_perms"]
+            ))
+            policy.add_macro("corenet_udp_sendrecv_generic_node", [f"{self.module_name}_t"])
+            policy.add_macro("corenet_udp_bind_generic_node", [f"{self.module_name}_t"])
 
         needs_initrc = (
             (service_info and getattr(service_info, 'needs_initrc_exec_t', False))

@@ -102,7 +102,7 @@ class CAnalyzer(BaseAnalyzer):
     def _detect_socket(self, code: str) -> List[Access]:
         accesses = []
         self._last_socket_domain = None
-        self._last_socket_type = "SOCK_STREAM"
+        self._last_socket_type = None
 
         for match in self.SOCKET_PATTERN.finditer(code):
             domain = match.group(1)
@@ -142,7 +142,7 @@ class CAnalyzer(BaseAnalyzer):
                 else:
                     accesses.append(Access(
                         access_type=AccessType.SOCKET_CREATE,
-                        path=f"{domain}:SOCK_STREAM",
+                        path=f"{domain}",
                         syscall="socket",
                         details={"domain": domain},
                         source_line=code[:match.start()].count('\n') + 1,
@@ -153,11 +153,15 @@ class CAnalyzer(BaseAnalyzer):
         accesses = []
         for match in self.BIND_PATTERN.finditer(code):
             domain = getattr(self, '_last_socket_domain', None)
+            sock_type = getattr(self, '_last_socket_type', None)
+            details = {"domain": domain}
+            if sock_type:
+                details["sock_type"] = sock_type
             accesses.append(Access(
                 access_type=AccessType.SOCKET_BIND,
                 path="",
                 syscall="bind",
-                details={"domain": domain},
+                details=details,
                 source_line=code[:match.start()].count('\n') + 1
             ))
         return accesses

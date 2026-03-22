@@ -61,10 +61,14 @@ class FCGenerator:
                     elif i + 2 < len(parts):
                         return str(Path(*parts[:i + 3])) + "(/.*)?"
 
-        if "_data_t" in selinux_type:
-            parent = str(Path(path).parent)
-            if parent != "/":
-                return parent + "(/.*)?"
+        if "_data_t" in selinux_type or "_log_t" in selinux_type:
+            p = Path(path)
+            if p.suffix:
+                base = str(p.parent)
+            else:
+                base = str(p)
+            if base != "/":
+                return base + "(/.*)?"
 
         return path
 

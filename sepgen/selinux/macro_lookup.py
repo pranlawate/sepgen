@@ -9,6 +9,7 @@ class MacroLookup:
         IntentType.SYSLOG: "logging_send_syslog_msg",
         IntentType.CONFIG_FILE: "read_files_pattern",
         IntentType.NETWORK_SERVER: "corenet_tcp_bind_generic_node",
+        IntentType.UDP_NETWORK_SERVER: "corenet_udp_bind_generic_node",
     }
 
     def __init__(self):

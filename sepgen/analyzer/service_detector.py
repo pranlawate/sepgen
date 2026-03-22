@@ -12,6 +12,7 @@ class ServiceInfo:
     has_service_file: bool = False
     config_paths: List[str] = field(default_factory=list)
     pid_paths: List[str] = field(default_factory=list)
+    data_paths: List[str] = field(default_factory=list)
 
     @property
     def needs_initrc_exec_t(self) -> bool:
@@ -23,6 +24,17 @@ class ServiceDetector:
 
     EXEC_START_PATTERN = re.compile(r'ExecStart\s*=\s*(.+)')
     PID_FILE_PATTERN = re.compile(r'PIDFile\s*=\s*(.+)')
+
+    SYSTEMD_DIR_MAP = {
+        'StateDirectory': '/var/lib/',
+        'RuntimeDirectory': '/run/',
+        'LogsDirectory': '/var/log/',
+        'CacheDirectory': '/var/cache/',
+    }
+    SYSTEMD_DIR_PATTERN = re.compile(
+        r'(StateDirectory|RuntimeDirectory|LogsDirectory|CacheDirectory)\s*=\s*(.+)'
+    )
+    RW_PATHS_PATTERN = re.compile(r'ReadWritePaths\s*=\s*(.+)')
 
     CONF_EXTENSIONS = ('.conf', '.cfg', '.ini', '.yaml', '.toml', '.json')
 
@@ -76,3 +88,20 @@ class ServiceDetector:
             pid_path = pid_match.group(1).strip()
             if pid_path and pid_path not in info.pid_paths:
                 info.pid_paths.append(pid_path)
+
+        for dir_match in self.SYSTEMD_DIR_PATTERN.finditer(content):
+            directive = dir_match.group(1)
+            prefix = self.SYSTEMD_DIR_MAP[directive]
+            for name in dir_match.group(2).strip().split():
+                name = name.strip()
+                if name:
+                    full_path = prefix + name
+                    if full_path not in info.data_paths:
+                        info.data_paths.append(full_path)
+
+        rw_match = self.RW_PATHS_PATTERN.search(content)
+        if rw_match:
+            for token in rw_match.group(1).strip().split():
+                path = token.lstrip('-')
+                if path.startswith('/') and path not in info.data_paths:
+                    info.data_paths.append(path)

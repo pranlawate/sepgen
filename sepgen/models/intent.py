@@ -13,6 +13,7 @@ class IntentType(Enum):
     LOG_FILE = "log_file"
     TEMP_FILE = "temp_file"
     NETWORK_SERVER = "network_server"
+    UDP_NETWORK_SERVER = "udp_network_server"
     NETWORK_CLIENT = "network_client"
     SYSLOG = "syslog"
     UNIX_SOCKET_SERVER = "unix_socket_server"
