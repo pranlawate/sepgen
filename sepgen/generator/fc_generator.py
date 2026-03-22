@@ -43,6 +43,9 @@ class FCGenerator:
                 if not access.path or not access.path.startswith('/'):
                     continue
 
+                if not self._is_app_owned(access.path, intent.selinux_type):
+                    continue
+
                 fc_path = self._path_to_fc_regex(access.path, intent.selinux_type)
                 if fc_path not in seen_paths:
                     seen_paths.add(fc_path)
@@ -53,6 +56,32 @@ class FCGenerator:
                         contexts.add_entry(run_alias, intent.selinux_type)
 
         return contexts
+
+    def _is_app_owned(self, path: str, selinux_type: str) -> bool:
+        """Determine if a path is owned by this app (needs .fc entry) vs
+        a system file the app merely reads (handled by macros instead).
+
+        App-owned: paths containing the module name or a recognizable
+        variant, in directories that suggest app ownership.
+        System: /etc/resolv.conf, /proc/*, /sys/*, other apps' dirs.
+        """
+        name = self.module_name.lower()
+        name_short = name.rstrip("d")
+        path_lower = path.lower()
+        parts = path_lower.split("/")
+
+        if name in path_lower or (name_short and len(name_short) > 2 and name_short in path_lower):
+            return True
+
+        if access_source := self._get_access_source(path):
+            if access_source in ("service_file", "config_file"):
+                return name in path_lower or name_short in path_lower
+
+        return False
+
+    @staticmethod
+    def _get_access_source(path: str) -> Optional[str]:
+        return None
 
     def _path_to_fc_regex(self, path: str, selinux_type: str) -> str:
         """Convert paths to .fc regex patterns for directory trees."""
