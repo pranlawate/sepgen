@@ -277,6 +277,18 @@ class DeviceAccessRule(ClassificationRule):
         return IntentType.DEV_RANDOM
 
 
+class ShmRule(ClassificationRule):
+    """Classify shared memory operations (shmget, shm_open, etc.)."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.IPC_SYSV, AccessType.IPC_POSIX):
+            return False
+        return access.details.get("ipc_type") == "shm"
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.SHM_ACCESS
+
+
 class ConfigDataRule(ClassificationRule):
     """Classify write paths extracted from config files as DATA_DIR."""
 
@@ -302,6 +314,7 @@ DEFAULT_RULES = [
     ExecBinaryRule(),
     SelfCapabilityRule(),
     SELinuxApiRule(),
+    ShmRule(),
     NetlinkSocketRule(),
     UnixSocketRule(),
     UdpServerRule(),

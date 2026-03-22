@@ -32,6 +32,7 @@ class TEGenerator:
         has_network_server = False
         has_udp_server = False
         has_netlink = False
+        has_shm = False
         var_run_type = None
         port_type = None
 
@@ -122,6 +123,8 @@ class TEGenerator:
                 policy.add_macro("seutil_read_config", [f"{self.module_name}_t"])
             elif intent.intent_type == IntentType.DEV_RANDOM:
                 policy.add_macro("dev_read_urand", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.SHM_ACCESS:
+                has_shm = True
 
         if has_unix_socket and var_run_type:
             policy.add_macro("manage_sock_files_pattern", [
@@ -216,6 +219,14 @@ class TEGenerator:
             ))
             policy.add_macro("corenet_udp_sendrecv_generic_node", [f"{self.module_name}_t"])
             policy.add_macro("corenet_udp_bind_generic_node", [f"{self.module_name}_t"])
+
+        if has_shm:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="shm",
+                permissions=["create_shm_perms"]
+            ))
 
         needs_initrc = (
             (service_info and getattr(service_info, 'needs_initrc_exec_t', False))

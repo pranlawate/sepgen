@@ -25,6 +25,7 @@ class IntentType(Enum):
     SELINUX_API = "selinux_api"
     NETLINK_SOCKET = "netlink_socket"
     DEV_RANDOM = "dev_random"
+    SHM_ACCESS = "shm_access"
     TERMINAL_IO = "terminal_io"
     SHARED_LIBRARY = "shared_library"
     UNKNOWN = "unknown"

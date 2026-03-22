@@ -35,6 +35,7 @@ class CAnalyzer(BaseAnalyzer):
     )
     CAP_TEXT_PATTERN = re.compile(r'"cap_([a-z_]+)=e?p?"')
     DAEMON_PATTERN = re.compile(r'\bdaemon\s*\(')
+    DEV_PATH_PATTERN = re.compile(r'"(/dev/(?:u?random))"')
     UNLINK_PATTERN = re.compile(r'\bunlink\s*\(\s*"([^"]+)"\s*\)')
     CHMOD_PATTERN = re.compile(r'\bchmod\s*\(\s*"([^"]+)"')
     OPEN_PATTERN = re.compile(r'\bopen\s*\(\s*"([^"]+)"\s*,\s*([^)]+)\)')
@@ -105,6 +106,7 @@ class CAnalyzer(BaseAnalyzer):
         accesses.extend(self._detect_capabilities(code))
         accesses.extend(self._detect_daemon(code))
         accesses.extend(self._detect_signal_include(code))
+        accesses.extend(self._detect_dev_paths(code))
 
         self._infer_bind_paths(accesses)
 
@@ -330,6 +332,22 @@ class CAnalyzer(BaseAnalyzer):
                     source_line=code[:match.start()].count('\n') + 1
                 ))
 
+        return accesses
+
+    def _detect_dev_paths(self, code: str) -> List[Access]:
+        accesses = []
+        seen = set()
+        for match in self.DEV_PATH_PATTERN.finditer(code):
+            path = match.group(1)
+            if path not in seen:
+                seen.add(path)
+                accesses.append(Access(
+                    access_type=AccessType.FILE_READ,
+                    path=path,
+                    syscall="dev_access",
+                    details={},
+                    source_line=code[:match.start()].count('\n') + 1
+                ))
         return accesses
 
     SIGNAL_INCLUDE_PATTERN = re.compile(r'#include\s+<signal\.h>')

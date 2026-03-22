@@ -107,7 +107,7 @@ class ServiceDetector:
         if rw_match:
             for token in rw_match.group(1).strip().split():
                 path = token.lstrip('-')
-                if path.startswith('/') and path not in info.data_paths:
+                if path.startswith('/') and path.count('/') >= 3 and path not in info.data_paths:
                     info.data_paths.append(path)
 
         for cap_match in self.CAP_BOUNDING_PATTERN.finditer(content):
