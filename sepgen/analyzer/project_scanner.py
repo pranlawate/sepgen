@@ -102,3 +102,15 @@ class ProjectScanner:
                     syscall="service_file",
                     details={"source": "service_file"},
                 ))
+        existing_caps = {
+            a.details.get("capability")
+            for a in info.accesses if a.access_type == AccessType.CAPABILITY
+        }
+        for cap in info.service_info.capabilities:
+            if cap not in existing_caps:
+                info.accesses.append(Access(
+                    access_type=AccessType.CAPABILITY,
+                    path="",
+                    syscall="service_file",
+                    details={"capability": cap},
+                ))

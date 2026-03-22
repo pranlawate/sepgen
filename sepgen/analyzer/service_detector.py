@@ -13,6 +13,7 @@ class ServiceInfo:
     config_paths: List[str] = field(default_factory=list)
     pid_paths: List[str] = field(default_factory=list)
     data_paths: List[str] = field(default_factory=list)
+    capabilities: List[str] = field(default_factory=list)
 
     @property
     def needs_initrc_exec_t(self) -> bool:
@@ -35,6 +36,9 @@ class ServiceDetector:
         r'(StateDirectory|RuntimeDirectory|LogsDirectory|CacheDirectory)\s*=\s*(.+)'
     )
     RW_PATHS_PATTERN = re.compile(r'ReadWritePaths\s*=\s*(.+)')
+    CAP_BOUNDING_PATTERN = re.compile(
+        r'(CapabilityBoundingSet|AmbientCapabilities)\s*=\s*(.+)'
+    )
 
     CONF_EXTENSIONS = ('.conf', '.cfg', '.ini', '.yaml', '.toml', '.json')
 
@@ -105,3 +109,13 @@ class ServiceDetector:
                 path = token.lstrip('-')
                 if path.startswith('/') and path not in info.data_paths:
                     info.data_paths.append(path)
+
+        for cap_match in self.CAP_BOUNDING_PATTERN.finditer(content):
+            line = cap_match.group(2).strip()
+            if line.startswith('~'):
+                continue
+            for token in line.split():
+                if token.startswith('CAP_'):
+                    cap_name = token[4:].lower()
+                    if cap_name not in info.capabilities:
+                        info.capabilities.append(cap_name)

@@ -47,6 +47,8 @@ SYMBOL_MAP: Dict[str, Tuple[AccessType, Dict]] = {
     # Network raw
     "raw": (AccessType.CAPABILITY, {"capability": "net_raw"}),
     "rawsocket": (AccessType.CAPABILITY, {"capability": "net_raw"}),
+    # Signal
+    "kill": (AccessType.CAPABILITY, {"capability": "kill"}),
     # Process execution
     "execl": (AccessType.PROCESS_EXEC, {}),
     "execlp": (AccessType.PROCESS_EXEC, {}),

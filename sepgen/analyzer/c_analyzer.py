@@ -20,9 +20,20 @@ class CAnalyzer(BaseAnalyzer):
     SOCKET_PATTERN_SIMPLE = re.compile(
         r'\bsocket\s*\(\s*(PF_UNIX|PF_INET|AF_UNIX|AF_INET|PF_INET6|AF_INET6|AF_NETLINK|PF_NETLINK)'
     )
+    WRAPPER_SOCKET_PATTERN = re.compile(
+        r'\w+\s*\([^)]*\b(AF_UNIX|PF_UNIX|AF_INET|PF_INET|AF_INET6|PF_INET6|AF_NETLINK|PF_NETLINK)\b'
+        r'[^)]*\b(SOCK_STREAM|SOCK_DGRAM|SOCK_RAW|SOCK_SEQPACKET)\b'
+    )
     BIND_PATTERN = re.compile(r'\bbind\s*\(')
     SETRLIMIT_PATTERN = re.compile(r'\bsetrlimit\s*\(')
     CAP_PATTERN = re.compile(r'\b(cap_init|cap_set_proc|cap_get_proc|cap_set_flag)\s*\(')
+    CAP_MACRO_PATTERN = re.compile(
+        r'\bCAP_(SYS_TIME|SYS_NICE|SYS_ADMIN|SYS_RESOURCE|SYS_CHROOT|SYS_BOOT|'
+        r'NET_ADMIN|NET_BIND_SERVICE|NET_RAW|'
+        r'KILL|DAC_READ_SEARCH|DAC_OVERRIDE|FSETID|FOWNER|CHOWN|'
+        r'IPC_LOCK|SETUID|SETGID|SETPCAP|MKNOD|AUDIT_WRITE|SYS_TTY_CONFIG)\b'
+    )
+    CAP_TEXT_PATTERN = re.compile(r'"cap_([a-z_]+)=e?p?"')
     DAEMON_PATTERN = re.compile(r'\bdaemon\s*\(')
     UNLINK_PATTERN = re.compile(r'\bunlink\s*\(\s*"([^"]+)"\s*\)')
     CHMOD_PATTERN = re.compile(r'\bchmod\s*\(\s*"([^"]+)"')
@@ -147,6 +158,30 @@ class CAnalyzer(BaseAnalyzer):
                         details={"domain": domain},
                         source_line=code[:match.start()].count('\n') + 1,
                     ))
+
+        if not accesses:
+            for match in self.WRAPPER_SOCKET_PATTERN.finditer(code):
+                domain = match.group(1)
+                sock_type = match.group(2)
+                self._last_socket_domain = domain
+                self._last_socket_type = sock_type
+                if domain in ("AF_NETLINK", "PF_NETLINK"):
+                    accesses.append(Access(
+                        access_type=AccessType.NETLINK_SOCKET,
+                        path="",
+                        syscall="socket_wrapper",
+                        details={"domain": domain, "sock_type": sock_type},
+                        source_line=code[:match.start()].count('\n') + 1,
+                    ))
+                else:
+                    accesses.append(Access(
+                        access_type=AccessType.SOCKET_CREATE,
+                        path=f"{domain}:{sock_type}",
+                        syscall="socket_wrapper",
+                        details={"domain": domain, "sock_type": sock_type},
+                        source_line=code[:match.start()].count('\n') + 1,
+                    ))
+
         return accesses
 
     def _detect_bind(self, code: str) -> List[Access]:
@@ -261,6 +296,7 @@ class CAnalyzer(BaseAnalyzer):
 
     def _detect_capabilities(self, code: str) -> List[Access]:
         accesses = []
+        seen_caps = set()
         for match in self.CAP_PATTERN.finditer(code):
             accesses.append(Access(
                 access_type=AccessType.CAPABILITY,
@@ -269,6 +305,31 @@ class CAnalyzer(BaseAnalyzer):
                 details={},
                 source_line=code[:match.start()].count('\n') + 1
             ))
+
+        for match in self.CAP_MACRO_PATTERN.finditer(code):
+            cap_name = match.group(1).lower()
+            if cap_name not in seen_caps:
+                seen_caps.add(cap_name)
+                accesses.append(Access(
+                    access_type=AccessType.CAPABILITY,
+                    path="",
+                    syscall="CAP_" + match.group(1),
+                    details={"capability": cap_name},
+                    source_line=code[:match.start()].count('\n') + 1
+                ))
+
+        for match in self.CAP_TEXT_PATTERN.finditer(code):
+            cap_name = match.group(1)
+            if cap_name not in seen_caps:
+                seen_caps.add(cap_name)
+                accesses.append(Access(
+                    access_type=AccessType.CAPABILITY,
+                    path="",
+                    syscall="cap_from_text",
+                    details={"capability": cap_name},
+                    source_line=code[:match.start()].count('\n') + 1
+                ))
+
         return accesses
 
     SIGNAL_INCLUDE_PATTERN = re.compile(r'#include\s+<signal\.h>')

@@ -11,6 +11,7 @@ class ConfigParser:
 
     KV_PATTERN = re.compile(r'^(\w+)\s*=\s*(.+)$', re.MULTILINE)
     DIRECTIVE_PATH = re.compile(r'^([a-zA-Z]\w*)\s+(/[\w/.\-]+)\s*$', re.MULTILINE)
+    XML_PATH = re.compile(r'>\s*(/etc/[\w/.\-]+)\s*<')
     ABS_PATH = re.compile(r'^/[\w/.\-]+$')
 
     def parse_config(self, config_path: Path) -> List[Access]:
@@ -44,6 +45,17 @@ class ConfigParser:
                 syscall="config_file",
                 details={"key": match.group(1), "source": "config_file", "config_path": source},
             ))
+        for match in self.XML_PATH.finditer(content):
+            path = match.group(1)
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            accesses.append(Access(
+                access_type=AccessType.FILE_READ,
+                path=path,
+                syscall="config_file",
+                details={"source": "config_template", "config_path": source},
+            ))
         return accesses
 
     def find_and_parse(self, project_dir: Path, config_names: List[str] = None) -> List[Access]:
@@ -61,9 +73,8 @@ class ConfigParser:
                     conf = search_dir / name
                     if conf.is_file():
                         accesses.extend(self.parse_config(conf))
-            for conf in search_dir.glob("*.conf"):
-                accesses.extend(self.parse_config(conf))
-            for conf in search_dir.glob("*.conf.*"):
-                accesses.extend(self.parse_config(conf))
+            for pattern in ("*.conf", "*.conf.*", "*.conf.in"):
+                for conf in search_dir.glob(pattern):
+                    accesses.extend(self.parse_config(conf))
 
         return accesses

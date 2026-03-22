@@ -263,6 +263,20 @@ class NetlinkSocketRule(ClassificationRule):
         return IntentType.NETLINK_SOCKET
 
 
+class DeviceAccessRule(ClassificationRule):
+    """Classify /dev/urandom and /dev/random as DEV_RANDOM."""
+
+    DEV_PATHS = {"/dev/urandom", "/dev/random"}
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.FILE_READ, AccessType.FILE_WRITE):
+            return False
+        return access.path in self.DEV_PATHS
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.DEV_RANDOM
+
+
 class ConfigDataRule(ClassificationRule):
     """Classify write paths extracted from config files as DATA_DIR."""
 
@@ -281,6 +295,7 @@ DEFAULT_RULES = [
     PidFileRule(),
     KernelStateRule(),
     SysfsRule(),
+    DeviceAccessRule(),
     ConfigFileRule(),
     SyslogRule(),
     DaemonProcessRule(),

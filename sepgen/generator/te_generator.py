@@ -120,6 +120,8 @@ class TEGenerator:
             elif intent.intent_type == IntentType.SELINUX_API:
                 policy.add_macro("selinux_compute_access_vector", [f"{self.module_name}_t"])
                 policy.add_macro("seutil_read_config", [f"{self.module_name}_t"])
+            elif intent.intent_type == IntentType.DEV_RANDOM:
+                policy.add_macro("dev_read_urand", [f"{self.module_name}_t"])
 
         if has_unix_socket and var_run_type:
             policy.add_macro("manage_sock_files_pattern", [
