@@ -401,28 +401,47 @@ Implemented:
 - Analyze + trace merge with trace-wins conflict resolution
 - domain_read_all_domains_state from /proc/PID/* access patterns
 
+**Policy refinement (Phase 3):**
+- `sepgen refine` command reads AVC denials from audit log
+- avc-parser integration (JSON output) with regex fallback
+- semacro integration for macro suggestions with well-known lookup fallback
+- Interactive broad vs specific choice for aggregate denials (security-first)
+- Auto-apply mode for non-aggregate suggestions
+- Proven: earlyoom analyze-only → refine → zero AVCs (no trace needed)
+
 **Core infrastructure:**
-- CLI with `analyze` and `trace` commands
+- CLI with `analyze`, `trace`, and `refine` commands
 - 26 deterministic classification rules
 - PolicyMerger for comparing/merging analyze and trace policies
 - TEWriter + FCWriter serialization with app-owned .fc filtering
 - 165 unit tests
-- Validated against 10 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, earlyoom, sosreport, libvirt
-- Tested on VM: earlyoom compiled, installed, running as earlyoom_t in enforcing mode
+- Validated against 11 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, earlyoom, sosreport, snapm, libvirt
+- Tested on VM: earlyoom running as earlyoom_t with zero AVCs in enforcing mode
 
-Future enhancements:
-- Refine command (update policy from audit log via avc-parser)
+**Comparison results (earlyoom):**
+
+| Mode | Elements | App runs? |
+|---|---|---|
+| Analyze only | 10 (NNP, caps, syslog, kernel) | No — missing /proc access |
+| Trace only | 8 (domain_read, exec_bin) | No — missing caps, NNP |
+| Analyze + Trace | 12 (all) | Yes — zero AVCs |
+| Analyze + Refine | 11 (analyze + domain_read) | Yes — zero AVCs |
+
+Next steps:
+- RPM packaging (sepgen + semacro + avc-parser as `/usr/bin/` tools)
+- Confine semacro using the full 3-phase workflow
+- Confine avc-parser (chicken-egg test of fallback logic)
+- Confine snapm (the real target)
 - Named port type lookup (port number → ntp_port_t, http_port_t)
 - Tree-sitter AST parsing (replacing regex for variable tracking)
 - `.if` interface file generation
 - Go/Rust source analyzers
-- Policy archetypes (daemon vs user app vs inetd vs dbus)
 
 ## Design Documentation
 
 - [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.8)
 - [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace/refine phases
-- [Implementation Plans](docs/superpowers/plans/) — 10 implementation plans from MVP to Python analyzer
+- [Implementation Plans](docs/superpowers/plans/) — 11 implementation plans from MVP to refine
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
