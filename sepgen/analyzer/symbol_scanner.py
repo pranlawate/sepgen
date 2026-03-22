@@ -49,6 +49,16 @@ SYMBOL_MAP: Dict[str, Tuple[AccessType, Dict]] = {
     "rawsocket": (AccessType.CAPABILITY, {"capability": "net_raw"}),
     # Signal
     "kill": (AccessType.CAPABILITY, {"capability": "kill"}),
+    # NSS resolution
+    "getpwnam": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getpwuid": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getpwnam_r": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getgrnam": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getgrgid": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getgrnam_r": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "gethostbyname": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "gethostbyname2": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
+    "getaddrinfo": (AccessType.CAPABILITY, {"capability": "nsswitch"}),
     # Process execution
     "execl": (AccessType.PROCESS_EXEC, {}),
     "execlp": (AccessType.PROCESS_EXEC, {}),

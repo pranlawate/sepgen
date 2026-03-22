@@ -33,6 +33,8 @@ class TEGenerator:
         has_udp_server = False
         has_netlink = False
         has_shm = False
+        has_sem = False
+        has_msgq = False
         var_run_type = None
         port_type = None
 
@@ -122,9 +124,22 @@ class TEGenerator:
                 policy.add_macro("selinux_compute_access_vector", [f"{self.module_name}_t"])
                 policy.add_macro("seutil_read_config", [f"{self.module_name}_t"])
             elif intent.intent_type == IntentType.DEV_RANDOM:
+                dev_path = None
+                for a in intent.accesses:
+                    if a.path:
+                        dev_path = a.path
+                        break
+                if dev_path == "/dev/random":
+                    policy.add_macro("dev_read_rand", [f"{self.module_name}_t"])
                 policy.add_macro("dev_read_urand", [f"{self.module_name}_t"])
             elif intent.intent_type == IntentType.SHM_ACCESS:
                 has_shm = True
+            elif intent.intent_type == IntentType.SEM_ACCESS:
+                has_sem = True
+            elif intent.intent_type == IntentType.MSGQ_ACCESS:
+                has_msgq = True
+            elif intent.intent_type == IntentType.NSSWITCH:
+                policy.add_macro("auth_use_nsswitch", [f"{self.module_name}_t"])
 
         if has_unix_socket and var_run_type:
             policy.add_macro("manage_sock_files_pattern", [
@@ -149,9 +164,9 @@ class TEGenerator:
                             process_perms.add("setrlimit")
                     elif access.access_type == AccessType.CAPABILITY:
                         cap = access.details.get("capability")
-                        if cap:
+                        if cap and cap != "nsswitch":
                             cap_perms.add(cap)
-                        else:
+                        elif not cap:
                             process_perms.update(["getcap", "setcap"])
 
         if cap_perms:
@@ -226,6 +241,20 @@ class TEGenerator:
                 target="self",
                 object_class="shm",
                 permissions=["create_shm_perms"]
+            ))
+        if has_sem:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="sem",
+                permissions=["create_sem_perms"]
+            ))
+        if has_msgq:
+            policy.allow_rules.append(AllowRule(
+                source=f"{self.module_name}_t",
+                target="self",
+                object_class="msgq",
+                permissions=["create_msgq_perms"]
             ))
 
         needs_initrc = (

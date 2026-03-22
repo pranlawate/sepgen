@@ -362,7 +362,7 @@ Implemented:
 - Static analysis pipeline (C analyzer with regex-based pattern detection)
 - Syscall mapper (C library function → syscall translation)
 - Runtime tracing pipeline (strace parser, process tracer)
-- Intent classification engine with 18 deterministic rules
+- Intent classification engine with 22 deterministic rules
 - SELinux type generator and hybrid macro lookup
 - Policy generation (.te) and file context generation (.fc)
 - Policy serialization (TEWriter, FCWriter)
@@ -384,8 +384,9 @@ Implemented:
 - /dev/urandom and /dev/random -> dev_read_urand() macro
 - Wrapper function socket detection (catches indirect socket creation via helper functions)
 - Template config file scanning (.conf.in with XML path extraction)
-- Device path string literal scanner (/dev/urandom, /dev/random in any context)
-- SHM/IPC detection (shmget, shm_open) with self:shm allow rules
+- Device path string literal scanner (/dev/urandom → dev_read_urand, /dev/random → dev_read_rand)
+- IPC detection: SHM (self:shm), semaphores (self:sem), message queues (self:msgq)
+- NSS resolution detection (getpwnam, getgrnam, getaddrinfo → auth_use_nsswitch)
 - UDP and TCP socket protocol awareness (separate corenet_udp_* and corenet_tcp_* macros)
 - Socket type propagation (SOCK_DGRAM vs SOCK_STREAM through socket→bind chain)
 - `self:` allow rules (capability with specific caps from setuid/setgid/chown/etc., process, unix_stream_socket, tcp_socket, udp_socket, unix_dgram_socket, netlink)
@@ -395,7 +396,7 @@ Implemented:
 - /var/run + /run dual alias in .fc generation
 - VarRunRule, PathPrefixRule, bind path inference, signal_perms
 - MakefileParser, ProjectScanner, SymbolScanner
-- Validated against 7 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, and libvirt
+- Validated against 9 apps: testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, dnf5, and libvirt
 
 Future enhancements:
 - Interactive tracing mode with live UI

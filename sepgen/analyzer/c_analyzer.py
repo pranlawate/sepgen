@@ -39,7 +39,7 @@ class CAnalyzer(BaseAnalyzer):
     )
     CAP_TEXT_PATTERN = re.compile(r'"cap_([a-z_]+)=e?p?"')
     DAEMON_PATTERN = re.compile(r'\bdaemon\s*\(')
-    DEV_PATH_PATTERN = re.compile(r'"(/dev/(?:u?random))"')
+    DEV_PATH_PATTERN = re.compile(r'"(/dev/(?:u?random|urandom))"')
     UNLINK_PATTERN = re.compile(r'\bunlink\s*\(\s*"([^"]+)"\s*\)')
     CHMOD_PATTERN = re.compile(r'\bchmod\s*\(\s*"([^"]+)"')
     OPEN_PATTERN = re.compile(r'\bopen\s*\(\s*"([^"]+)"\s*,\s*([^)]+)\)')

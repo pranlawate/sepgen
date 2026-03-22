@@ -289,6 +289,45 @@ class ShmRule(ClassificationRule):
         return IntentType.SHM_ACCESS
 
 
+class SemRule(ClassificationRule):
+    """Classify semaphore operations (semget, sem_open, etc.)."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.IPC_SYSV, AccessType.IPC_POSIX):
+            return False
+        return access.details.get("ipc_type") == "sem"
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.SEM_ACCESS
+
+
+class MsgqRule(ClassificationRule):
+    """Classify message queue operations (msgget, mq_open, etc.)."""
+
+    def matches(self, access: Access) -> bool:
+        if access.access_type not in (AccessType.IPC_SYSV, AccessType.IPC_POSIX):
+            return False
+        return access.details.get("ipc_type") == "mq"
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.MSGQ_ACCESS
+
+
+class NsswitchRule(ClassificationRule):
+    """Classify NSS resolution calls (getpwnam, getgrnam, gethostbyname)."""
+
+    NSS_FUNCTIONS = {"getpwnam", "getpwuid", "getgrnam", "getgrgid",
+                     "gethostbyname", "gethostbyname2", "getaddrinfo",
+                     "getpwnam_r", "getgrnam_r"}
+
+    def matches(self, access: Access) -> bool:
+        return (access.access_type == AccessType.CAPABILITY
+                and access.details.get("capability") == "nsswitch")
+
+    def get_intent_type(self) -> IntentType:
+        return IntentType.NSSWITCH
+
+
 class ConfigDataRule(ClassificationRule):
     """Classify write paths extracted from config files as DATA_DIR."""
 
@@ -312,9 +351,12 @@ DEFAULT_RULES = [
     SyslogRule(),
     DaemonProcessRule(),
     ExecBinaryRule(),
+    NsswitchRule(),
     SelfCapabilityRule(),
     SELinuxApiRule(),
     ShmRule(),
+    SemRule(),
+    MsgqRule(),
     NetlinkSocketRule(),
     UnixSocketRule(),
     UdpServerRule(),
