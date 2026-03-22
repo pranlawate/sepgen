@@ -1,8 +1,21 @@
+"""Compare and merge SELinux policies from analyze and trace pipelines."""
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Tuple, Optional, List
-from sepgen.models.policy import PolicyModule, TypeDeclaration, MacroCall
+from typing import Tuple, Optional, List, Set
+from sepgen.models.policy import PolicyModule, TypeDeclaration, MacroCall, AllowRule
+
+
+SYSTEM_PATHS = {
+    "/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.preload",
+    "/etc/localtime", "/etc/passwd", "/etc/group", "/etc/shadow",
+    "/etc/nsswitch.conf", "/etc/host.conf", "/etc/hosts",
+    "/etc/resolv.conf", "/etc/gai.conf", "/etc/services",
+    "/etc/protocols", "/etc/networks",
+    "/etc/selinux/config",
+    "/etc/crypto-policies/back-ends/gnutls.config",
+    "/etc/crypto-policies/back-ends/openssl.config",
+}
 
 
 @dataclass
@@ -13,11 +26,14 @@ class MergeReport:
     existing_only_types: List[TypeDeclaration] = field(default_factory=list)
     matched_macros: List[MacroCall] = field(default_factory=list)
     new_macros: List[MacroCall] = field(default_factory=list)
+    new_allow_rules: List[AllowRule] = field(default_factory=list)
     conflicts: List[dict] = field(default_factory=list)
 
 
 class PolicyMerger:
     """Handle policy comparison and merging"""
+
+    SKIP_MACROS = {"policy_module", "gen_require"}
 
     def detect_existing_policy(self, module_name: str) -> Tuple[Optional[Path], Optional[Path]]:
         te_path = Path(f"{module_name}.te").resolve()
@@ -29,7 +45,7 @@ class PolicyMerger:
         )
 
     def load_existing_policy(self, te_path: Path) -> PolicyModule:
-        """Parse existing .te file with basic regex parsing"""
+        """Parse existing .te file with basic regex parsing."""
         content = te_path.read_text()
 
         module_match = re.search(r'policy_module\((\w+),\s*([\d.]+)\)', content)
@@ -42,18 +58,30 @@ class PolicyMerger:
 
         policy = PolicyModule(name=name, version=version)
 
-        for match in re.finditer(r'type (\w+);', content):
+        for match in re.finditer(r'^type (\w+);', content, re.MULTILINE):
             policy.types.append(TypeDeclaration(match.group(1)))
 
-        for match in re.finditer(r'(\w+)\(([^)]+)\)', content):
+        for match in re.finditer(r'^(\w+)\(([^)]+)\)', content, re.MULTILINE):
             macro_name = match.group(1)
+            if macro_name in self.SKIP_MACROS:
+                continue
             args = [arg.strip() for arg in match.group(2).split(',')]
             policy.macro_calls.append(MacroCall(macro_name, args))
+
+        for match in re.finditer(
+            r'^allow\s+(\w+)\s+(\w+):(\w+)\s+\{?\s*([^;]+?)\s*\}?\s*;',
+            content, re.MULTILINE
+        ):
+            perms = match.group(4).strip().split()
+            policy.allow_rules.append(AllowRule(
+                source=match.group(1), target=match.group(2),
+                object_class=match.group(3), permissions=perms
+            ))
 
         return policy
 
     def compare(self, existing: PolicyModule, new: PolicyModule) -> MergeReport:
-        """Compare two policies and identify differences"""
+        """Compare two policies and identify differences."""
         report = MergeReport()
 
         existing_type_names = {t.name for t in existing.types}
@@ -67,28 +95,37 @@ class PolicyMerger:
         existing_macros = {(m.name, tuple(m.args)): m for m in existing.macro_calls}
         new_macros = {(m.name, tuple(m.args)): m for m in new.macro_calls}
 
-        conflict_new_keys = set()
         for new_key, new_macro in new_macros.items():
             for existing_key, existing_macro in existing_macros.items():
                 if existing_key == new_key:
                     continue
-                same_name_diff_args = existing_key[0] == new_key[0] and existing_key[1] != new_key[1]
-                diff_name_same_args = existing_key[0] != new_key[0] and existing_key[1] == new_key[1]
-                if same_name_diff_args or diff_name_same_args:
+                if existing_key[0] == new_key[0] and existing_key[1] != new_key[1]:
                     report.conflicts.append({
                         'type': 'macro',
                         'name': new_macro.name,
                         'existing': existing_macro,
                         'new': new_macro
                     })
-                    conflict_new_keys.add(new_key)
                     break
 
         matched_macro_keys = set(existing_macros.keys()) & set(new_macros.keys())
         report.matched_macros = [new_macros[k] for k in matched_macro_keys]
 
-        new_macro_keys = set(new_macros.keys()) - set(existing_macros.keys()) - conflict_new_keys
-        report.new_macros = [new_macros[k] for k in new_macro_keys]
+        conflict_names = {c['name'] for c in report.conflicts}
+        new_macro_keys = set(new_macros.keys()) - set(existing_macros.keys())
+        report.new_macros = [
+            new_macros[k] for k in new_macro_keys
+            if k[0] not in conflict_names
+        ]
+
+        existing_rules = {
+            (r.source, r.target, r.object_class, tuple(sorted(r.permissions)))
+            for r in existing.allow_rules
+        }
+        for rule in new.allow_rules:
+            key = (rule.source, rule.target, rule.object_class, tuple(sorted(rule.permissions)))
+            if key not in existing_rules:
+                report.new_allow_rules.append(rule)
 
         return report
 
@@ -99,7 +136,7 @@ class PolicyMerger:
         strategy: str = "trace-wins",
         auto_approve: bool = False
     ) -> PolicyModule:
-        """Merge policies according to strategy"""
+        """Merge policies according to strategy."""
         report = self.compare(existing, new)
 
         merged = PolicyModule(name=existing.name, version=existing.version)
@@ -107,19 +144,41 @@ class PolicyMerger:
         merged.macro_calls = existing.macro_calls.copy()
         merged.allow_rules = existing.allow_rules.copy()
 
-        for new_type in report.new_types:
-            merged.types.append(new_type)
+        if existing.typeattributes:
+            merged.typeattributes = existing.typeattributes.copy()
+        if existing.require:
+            merged.require = existing.require
 
-        if strategy == "trace-wins":
-            if auto_approve or not report.conflicts:
-                for conflict in report.conflicts:
-                    merged.macro_calls = [
-                        m for m in merged.macro_calls
-                        if not (m.name == conflict['existing'].name)
-                    ]
-                    merged.macro_calls.append(conflict['new'])
+        for new_type in report.new_types:
+            merged.add_type(new_type.name)
+
+        if strategy == "trace-wins" and (auto_approve or not report.conflicts):
+            for conflict in report.conflicts:
+                merged.macro_calls = [
+                    m for m in merged.macro_calls
+                    if not (m.name == conflict['existing'].name and m.args == conflict['existing'].args)
+                ]
+                merged.add_macro(conflict['new'].name, conflict['new'].args)
 
         for new_macro in report.new_macros:
-            merged.macro_calls.append(new_macro)
+            merged.add_macro(new_macro.name, new_macro.args)
+
+        for rule in report.new_allow_rules:
+            merged.allow_rules.append(rule)
+
+        if new.typeattributes:
+            for ta in new.typeattributes:
+                if ta not in (merged.typeattributes or []):
+                    if not merged.typeattributes:
+                        merged.typeattributes = []
+                    merged.typeattributes.append(ta)
+
+        if new.require and not merged.require:
+            merged.require = new.require
 
         return merged
+
+    @staticmethod
+    def is_system_path(path: str) -> bool:
+        """Check if a path is a common system file that shouldn't get app-specific types."""
+        return path in SYSTEM_PATHS or path.startswith("/lib") or path.startswith("/usr/lib")

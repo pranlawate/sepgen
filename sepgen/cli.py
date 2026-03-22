@@ -148,6 +148,8 @@ def run_trace(args) -> int:
         for intent in intents:
             print(f"  • {intent.intent_type.value}: {intent.accesses[0].path}")
 
+    filtered = [a for a in accesses if not merger.is_system_path(a.path)]
+
     print(f"[4/4] Generating policy... ", end='', flush=True)
 
     te_gen = TEGenerator(module_name)
@@ -155,6 +157,9 @@ def run_trace(args) -> int:
 
     fc_gen = FCGenerator(module_name, exec_path=args.binary)
     new_contexts = fc_gen.generate(intents)
+
+    trace_fc = [e for e in new_contexts.entries if not merger.is_system_path(e.path)]
+    new_contexts.entries = trace_fc
 
     if existing_te:
         print(f"✓")
@@ -166,7 +171,11 @@ def run_trace(args) -> int:
         print(f"\nComparison:")
         print(f"  Static analysis: {len(existing_policy.types)} types")
         print(f"  Runtime trace:   {len(new_policy.types)} types")
-        print(f"  Matched:        {len(report.matched_types)} types")
+        print(f"  Matched:         {len(report.matched_types)} types")
+        if report.new_types:
+            print(f"  New from trace:  {', '.join(t.name for t in report.new_types)}")
+        if report.new_allow_rules:
+            print(f"  New rules:       {len(report.new_allow_rules)}")
 
         if report.conflicts:
             print(f"\nConflicts found: {len(report.conflicts)}")
@@ -187,6 +196,23 @@ def run_trace(args) -> int:
                 print("Skipping merge.")
                 return 0
 
+        from sepgen.models.policy import FileContexts
+        from sepgen.generator.fc_writer import FCWriter as FCW
+        if existing_fc:
+            existing_fc_content = existing_fc.read_text()
+            existing_paths = set()
+            for line in existing_fc_content.strip().split('\n'):
+                if line.strip():
+                    parts = line.split('\t')
+                    if parts:
+                        existing_paths.add(parts[0].strip())
+            for entry in new_contexts.entries:
+                if entry.path not in existing_paths:
+                    existing_fc_content += f"\n{entry}"
+            final_fc_content = existing_fc_content
+        else:
+            final_fc_content = None
+
         backup_te = Path(f"{module_name}.te.backup")
         backup_fc = Path(f"{module_name}.fc.backup")
         existing_te.rename(backup_te)
@@ -196,6 +222,7 @@ def run_trace(args) -> int:
         print(f"Backup saved: {backup_te}")
     else:
         final_policy = new_policy
+        final_fc_content = None
         print(f"✓")
 
     te_writer = TEWriter()
@@ -205,8 +232,12 @@ def run_trace(args) -> int:
     fc_path = Path(f"{module_name}.fc")
 
     te_writer.write(final_policy, te_path)
-    fc_writer.write(new_contexts, fc_path)
 
-    print(f"\nGenerated: {te_path} ({len(final_policy.types)} types), {fc_path} ({len(new_contexts.entries)} entries)")
+    if final_fc_content:
+        fc_path.write_text(final_fc_content + "\n")
+    else:
+        fc_writer.write(new_contexts, fc_path)
+
+    print(f"\nGenerated: {te_path} ({len(final_policy.types)} types), {fc_path}")
 
     return 0

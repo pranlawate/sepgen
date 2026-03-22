@@ -38,4 +38,17 @@ def test_compare_policies():
 
     assert len(report.matched_types) >= 1
     assert "myapp_data_t" in [t.name for t in report.new_types]
-    assert len(report.conflicts) >= 1
+    assert len(report.new_macros) >= 1
+
+
+def test_compare_same_name_conflict():
+    existing = PolicyModule(name="myapp", version="1.0.0")
+    existing.macro_calls.append(MacroCall("read_files_pattern", ["myapp_t", "old_t", "old_t"]))
+
+    new = PolicyModule(name="myapp", version="1.0.0")
+    new.macro_calls.append(MacroCall("read_files_pattern", ["myapp_t", "new_t", "new_t"]))
+
+    merger = PolicyMerger()
+    report = merger.compare(existing, new)
+    assert len(report.conflicts) == 1
+    assert report.conflicts[0]['name'] == "read_files_pattern"
