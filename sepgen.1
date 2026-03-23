@@ -1,0 +1,109 @@
+.TH SEPGEN 1 "March 2026" "sepgen 0.1.0" "SELinux Policy Tools"
+.SH NAME
+sepgen \- SELinux policy generator from source code and runtime tracing
+.SH SYNOPSIS
+.B sepgen analyze
+.I source_path
+.RB [ \-\-name
+.IR NAME ]
+.RB [ \-\-exec\-path
+.IR PATH ]
+.RB [ \-v ]
+.br
+.B sepgen trace
+.I binary
+.RB [ \-\-name
+.IR NAME ]
+.RB [ \-\-pid
+.IR PID ]
+.RB [ \-y ]
+.RB [ \-v ]
+.br
+.B sepgen refine
+.B \-\-name
+.I NAME
+.RB [ \-\-audit\-log
+.IR PATH ]
+.RB [ \-\-auto ]
+.RB [ \-v ]
+.SH DESCRIPTION
+.B sepgen
+generates SELinux policy modules from source code analysis and runtime
+tracing. It produces macro-based .te and .fc files with custom types,
+ready to compile with
+.BR checkmodule (8)
+and install with
+.BR semodule (8).
+.PP
+Three-phase workflow:
+.TP
+.B analyze
+Static analysis of C/C++/Python source code. Detects syscall patterns,
+capabilities, socket usage, config paths, and service file directives.
+.TP
+.B trace
+Runtime tracing with
+.BR strace (1)
+using \-\-secontext for SELinux context awareness. Captures actual file
+access, socket operations, and process execution.
+.TP
+.B refine
+Reads AVC denials from
+.I /var/log/audit/audit.log
+using
+.BR avc-parser (1)
+and suggests macro additions using
+.BR semacro (1).
+.SH OPTIONS
+.SS "analyze options"
+.TP
+.BI \-\-name " NAME"
+Policy module name (default: derived from source path).
+.TP
+.BI \-\-exec\-path " PATH"
+Override installed binary path for .fc entry.
+.TP
+.BR \-v ", " \-\-verbose
+Increase verbosity (\-v for verbose, \-vv for debug).
+.SS "trace options"
+.TP
+.BI \-\-name " NAME"
+Policy module name.
+.TP
+.BI \-\-pid " PID"
+Attach to existing process instead of starting a new one.
+.TP
+.BR \-y ", " \-\-auto\-merge
+Auto-approve merge conflicts (trace wins).
+.SS "refine options"
+.TP
+.BI \-\-name " NAME"
+Policy module name (required).
+.TP
+.BI \-\-audit\-log " PATH"
+Path to audit log (default: /var/log/audit/audit.log).
+.TP
+.B \-\-auto
+Auto-apply non-aggregate suggestions to .te file.
+.SH EXAMPLES
+.nf
+# Generate policy from C source
+sepgen analyze ./src/ \-\-name myapp
+
+# Trace a binary and merge with existing policy
+sepgen trace /usr/sbin/myapp \-y
+
+# Refine policy from AVC denials
+sepgen refine \-\-name myapp \-\-auto
+.fi
+.SH SEE ALSO
+.BR semacro (1),
+.BR avc-parser (1),
+.BR strace (1),
+.BR semodule (8),
+.BR checkmodule (8),
+.BR audit2allow (1)
+.SH AUTHOR
+Pranav Lawate
+.SH LICENSE
+MIT License

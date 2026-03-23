@@ -39,6 +39,7 @@ for a complete SELinux policy development workflow.
 
 %install
 %pyproject_install
+install -Dm644 sepgen.1 %{buildroot}%{_mandir}/man1/sepgen.1
 install -Dm644 completions/sepgen.bash \
     %{buildroot}%{_datadir}/bash-completion/completions/sepgen
 install -Dm644 completions/sepgen.zsh \
@@ -50,6 +51,7 @@ install -Dm644 completions/sepgen.zsh \
 %{_bindir}/sepgen
 %{python3_sitelib}/sepgen/
 %{python3_sitelib}/sepgen-%{version}.dist-info/
+%{_mandir}/man1/sepgen.1*
 %{_datadir}/bash-completion/completions/sepgen
 %{_datadir}/zsh/site-functions/_sepgen
 
