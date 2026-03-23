@@ -1,8 +1,8 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 1.8
+**Version:** 2.0
 **Date:** 2026-03-22
-**Status:** Static analysis complete — device path string scanner, SHM/IPC intent; all regex-achievable gaps closed
+**Status:** All three phases functional — analyze (C/C++/Python), trace (--secontext), refine (avc-parser + semacro). Proven: earlyoom confined with zero AVCs.
 
 ---
 

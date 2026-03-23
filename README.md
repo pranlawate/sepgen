@@ -439,14 +439,14 @@ Next steps:
 
 ## Design Documentation
 
-- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v1.8)
+- [Design Spec](docs/superpowers/specs/2026-03-21-sepgen-design.md) (v2.0)
 - [Trace Mode Scope](docs/superpowers/specs/trace-mode-scope.md) — gaps for trace/refine phases
-- [Implementation Plans](docs/superpowers/plans/) — 11 implementation plans from MVP to refine
+- [Implementation Plans](docs/superpowers/plans/) — 12 implementation plans from MVP to RPM packaging
 - [mcstransd Analysis Report](testing/mcstrans/ANALYSIS_REPORT.md) — efficiency assessment
 
 ## License
 
-TBD
+MIT License — see [LICENSE](LICENSE)
 
 ## Author
 
