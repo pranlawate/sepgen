@@ -160,7 +160,20 @@ trace (runtime), refine (denial-driven).
 - Verify: `sepgen analyze`, `sepgen trace`, `sepgen refine` all work
 - Verify: refine finds semacro and avc-parser in PATH
 
-## Phase 4: Confine the Tools
+## Phase 4: COPR Distribution (optional, after local RPM works)
+
+### Step 9b: Set up COPR project
+- Create COPR project: `pranlawate/selinux-tools`
+- Upload .src.rpm files or connect to GitHub repos
+- Enable builds for Fedora 42, 43, and EPEL 9
+- Users install with: `dnf copr enable pranlawate/selinux-tools`
+
+### Step 9c: Verify COPR install
+- Test on clean VM: `dnf copr enable pranlawate/selinux-tools`
+- `dnf install sepgen` (pulls semacro + avc-parser via Recommends)
+- Verify complete workflow works
+
+## Phase 5: Confine the Tools
 
 ### Step 10: Confine semacro
 - `sepgen analyze` on semacro source (Python)
