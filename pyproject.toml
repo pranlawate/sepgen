@@ -8,9 +8,7 @@ version = "0.1.0"
 description = "SELinux policy generator with static analysis and runtime tracing"
 authors = [{name = "Pranav Lawate"}]
 requires-python = ">=3.9"
-dependencies = [
-    "semacro",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -19,7 +17,7 @@ dev = [
 ]
 
 [project.scripts]
-sepgen = "sepgen.__main__:main"
+sepgen = "sepgen.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
