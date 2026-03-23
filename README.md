@@ -289,20 +289,24 @@ sepgen classifies raw accesses into security intents using deterministic rules:
 
 ## Installation
 
-### System packages (Fedora/RHEL)
+### Recommended: COPR (Fedora 42/43)
 
 ```bash
-sudo dnf install strace python3-libselinux policycoreutils policycoreutils-devel \
-                 setools-console libselinux-utils
+sudo dnf copr enable pranlawate/selinux-tools
+sudo dnf install sepgen semacro avc-parser
 ```
 
-### Python package
+This installs all three tools with bash/zsh tab completion.
+
+### From GitHub Release
 
 ```bash
-pip install sepgen
+# Download and install RPM directly
+sudo dnf install https://github.com/pranlawate/sepgen/releases/download/v0.1.0/sepgen-0.1.0-1.fc43.noarch.rpm
 ```
 
-Or from source:
+### From source (developers)
+
 ```bash
 git clone https://github.com/pranlawate/sepgen.git
 cd sepgen
