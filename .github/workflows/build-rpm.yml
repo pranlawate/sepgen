@@ -1,0 +1,50 @@
+name: Build RPM and attach to Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:43
+
+    steps:
+      - name: Install build tools
+        run: |
+          dnf install -y rpm-build python3-devel python3-setuptools python3-wheel python3-pip git
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create source tarball
+        run: |
+          VERSION=$(grep '^Version:' sepgen.spec | awk '{print $2}')
+          mkdir -p ~/rpmbuild/SOURCES
+          tar czf ~/rpmbuild/SOURCES/sepgen-${VERSION}.tar.gz \
+              --transform "s,^,sepgen-${VERSION}/," \
+              --exclude='.git' --exclude='testing' --exclude='__pycache__' \
+              *
+
+      - name: Build RPM
+        run: |
+          cp sepgen.spec ~/rpmbuild/SPECS/ 2>/dev/null || true
+          rpmbuild -ba sepgen.spec
+
+      - name: Upload RPM to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ~/rpmbuild/RPMS/noarch/sepgen-*.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/ -q
