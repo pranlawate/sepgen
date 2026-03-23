@@ -59,7 +59,7 @@ install -Dm644 completions/sepgen.zsh \
 %{_datadir}/zsh/site-functions/_sepgen
 
 %changelog
-* Sun Mar 23 2026 Pranav Lawate <pran.lawate@gmail.com> - 0.1.0-2
+* Mon Mar 23 2026 Pranav Lawate <pran.lawate@gmail.com> - 0.1.0-2
 - Add %check with pytest (165 tests)
 - Add man page, bash/zsh completion
 - Fix Source0 URL, remove devel dep from Requires
