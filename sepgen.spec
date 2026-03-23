@@ -5,17 +5,17 @@ Summary:        SELinux policy generator from source code and runtime tracing
 
 License:        MIT
 URL:            https://github.com/pranlawate/sepgen
-Source0:        %{name}-%{version}.tar.gz
+Source0:        https://github.com/pranlawate/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
 BuildRequires:  python3-wheel
+BuildRequires:  python3-pytest
 Requires:       python3 >= 3.9
 Requires:       strace
 Requires:       selinux-policy-devel
-Requires:       policycoreutils-devel
 Recommends:     semacro
 Recommends:     avc-parser
 
@@ -36,6 +36,9 @@ for a complete SELinux policy development workflow.
 
 %build
 %pyproject_wheel
+
+%check
+%pytest tests/ -q
 
 %install
 %pyproject_install
