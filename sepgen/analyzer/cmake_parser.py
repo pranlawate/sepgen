@@ -25,16 +25,19 @@ class CMakeParser:
         all_installed = []
         all_executables = []
 
-        search_dirs = [project_dir]
-        parent = project_dir.parent
-        if parent != project_dir:
-            search_dirs.append(parent)
+        for cmake_file in sorted(project_dir.rglob("CMakeLists.txt")):
+            exes, installed = self._collect_targets(cmake_file)
+            all_executables.extend(exes)
+            all_installed.extend(installed)
 
-        for search_dir in search_dirs:
-            for cmake_file in sorted(search_dir.rglob("CMakeLists.txt")):
-                exes, installed = self._collect_targets(cmake_file)
-                all_executables.extend(exes)
-                all_installed.extend(installed)
+        if not all_executables and not all_installed:
+            parent = project_dir.parent
+            if parent != project_dir:
+                cmake_parent = parent / "CMakeLists.txt"
+                if cmake_parent.is_file():
+                    exes, installed = self._collect_targets(cmake_parent)
+                    all_executables.extend(exes)
+                    all_installed.extend(installed)
 
         if module_name:
             for name in all_executables:

@@ -46,17 +46,24 @@ class MakefileParser:
         """Find and parse Makefile in project tree."""
         info = BuildInfo()
 
-        search_dirs = [project_dir]
-        parent = project_dir.parent
-        if parent != project_dir:
-            search_dirs.append(parent)
+        makefile = project_dir / "Makefile"
+        if makefile.is_file():
+            self._parse_file(makefile, info)
+            if info.prog_name:
+                return info
 
-        for search_dir in search_dirs:
-            makefile = search_dir / "Makefile"
-            if makefile.is_file():
+        if not info.prog_name:
+            for makefile in sorted(project_dir.rglob("Makefile")):
                 self._parse_file(makefile, info)
                 if info.prog_name:
                     return info
+
+        if not info.prog_name:
+            parent = project_dir.parent
+            if parent != project_dir:
+                parent_makefile = parent / "Makefile"
+                if parent_makefile.is_file():
+                    self._parse_file(parent_makefile, info)
 
         return info
 
