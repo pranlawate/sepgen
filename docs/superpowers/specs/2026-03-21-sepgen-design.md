@@ -1,8 +1,35 @@
 # sepgen: SELinux Policy Generator Design Document
 
-**Version:** 2.0
-**Date:** 2026-03-22
-**Status:** All three phases functional — analyze (C/C++/Python), trace (--secontext), refine (avc-parser + semacro). Proven: earlyoom confined with zero AVCs.
+**Version:** 2.1
+**Date:** 2026-03-23
+**Status:** Production-ready — analyze (C/C++/Python), trace (--secontext),
+refine (avc-parser + semacro). RPM packaged, COPR distributed, earlyoom
+confined with zero AVCs in enforcing mode.
+
+### Implementation Status (consolidated from 12 implementation plans)
+
+| Plan | Status | Key deliverables |
+|------|--------|-----------------|
+| MVP (2026-03-21) | Complete | Core pipeline: Access → Intent → PolicyModule → .te/.fc |
+| Analyzer Improvements | Complete | Preprocessor, DataFlow, IncludeAnalyzer, 15+ patterns |
+| Coverage Fixes | Complete | Cross-file dedup, VarRunRule, bind path inference |
+| Auto-Detection | Complete | MakefileParser, ServiceDetector, ProjectScanner |
+| Max Static Analysis | Complete | 20+ patterns, socket expansion, /proc, /sys, netlink |
+| General Improvements | Complete | UDP support, capability details, sock_type propagation |
+| Tier A Gaps | Complete | CAP_* macros, cap_from_text, wrapper sockets, /dev/urandom |
+| Final Static Gaps | Complete | Device scanner, SHM/IPC, all regex gaps closed |
+| Python Analyzer | Complete | AST-based: subprocess, open, dbus, syslog, path constants |
+| Trace Mode | Complete | --secontext, FD tracking, 15 syscalls, duration-based |
+| Refine Command | Complete | avc-parser + semacro integration, interactive A/B choices |
+| RPM Packaging | Complete | 3 RPMs, man pages, bash/zsh completion, COPR, GitHub Actions |
+
+### Proven results
+
+- **earlyoom:** analyze-only → install → refine → zero AVCs (enforcing mode)
+- **snapm:** Python analyze found 8 elements trace missed, trace found 5 analyze missed
+- **smartd:** Source analysis found capabilities missing from reference policy
+- **Coverage:** 100% of 25 Linux capabilities, 84% of top macros across 505 reference policies
+- **11 test apps validated:** testprog, testprog-net, mcstransd, chronyd, dbus, vsftpd, rpm, earlyoom, sosreport, snapm, libvirt
 
 ---
 
