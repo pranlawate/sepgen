@@ -39,6 +39,10 @@ for a complete SELinux policy development workflow.
 
 %install
 %pyproject_install
+install -Dm644 completions/sepgen.bash \
+    %{buildroot}%{_datadir}/bash-completion/completions/sepgen
+install -Dm644 completions/sepgen.zsh \
+    %{buildroot}%{_datadir}/zsh/site-functions/_sepgen
 
 %files
 %license LICENSE
@@ -46,6 +50,8 @@ for a complete SELinux policy development workflow.
 %{_bindir}/sepgen
 %{python3_sitelib}/sepgen/
 %{python3_sitelib}/sepgen-%{version}.dist-info/
+%{_datadir}/bash-completion/completions/sepgen
+%{_datadir}/zsh/site-functions/_sepgen
 
 %changelog
 * Sun Mar 22 2026 Pranav Lawate <pran.lawate@gmail.com> - 0.1.0-1
